@@ -1,8 +1,49 @@
 # JustDeploy
 
-A lean, single-server deploy tool for a fixed menu of app types. Bring your own VPS,
-config in files you own, no accounts, no forms. See [CONCEPT.md](CONCEPT.md) for the design
-and [docs/port-swap.md](docs/port-swap.md) for the one stateful operation.
+Lean, single-server deploy platform for a fixed menu of app types. Bring your own VPS —
+Docker + Caddy do the heavy lifting. No accounts, no forms: pick a type, point it at a repo,
+done. Ships a CLI **and** a React control panel.
+
+**What you get:** zero-downtime deploys · self-diagnosing failures (plain-English reason + fix) ·
+live build-log streaming · process supervision (crashed apps self-heal) · one-command rollback ·
+git-push auto-deploy · S3 / R2 backups · a Vercel-style dashboard built on the
+[justui](https://github.com/codellyson/justui) design system with six themes.
+
+See [CONCEPT.md](CONCEPT.md) for the design, [GAPS.md](GAPS.md) for the honest roadmap, and
+[docs/port-swap.md](docs/port-swap.md) for the one genuinely stateful operation.
+
+## Screenshots
+
+**Overview** — your fleet at a glance: services up, recent deploys, every app.
+
+![Overview](docs/screenshots/overview.png)
+
+**Per-app pages** — status, live logs, deploy history + rollback, env, and config, all in tabs.
+
+![App detail](docs/screenshots/app-detail.png)
+
+**New project** — the type picker *is* the configuration; it decides how the app builds and runs.
+
+![New project](docs/screenshots/new-project.png)
+
+## Quick start
+
+On a fresh Ubuntu VPS with your domain's DNS pointed at it:
+
+```sh
+# prerequisites: Node >= 22.5, Caddy (admin API on :2019), git, Docker (only for postgres)
+git clone https://github.com/codellyson/justdeploy /opt/justdeploy
+cd /opt/justdeploy && npm link
+
+# deploy your first app — the type decides build + run, and Caddy gets a Let's Encrypt cert
+justdeploy add https://github.com/you/site.git --type vite --domain app.example.com
+
+# optional: the web control panel (builds the React UI, served with TLS by Caddy)
+justdeploy dashboard install --domain panel.example.com
+
+# optional: git push -> auto-deploy
+justdeploy webhook
+```
 
 ## Requirements (on the server)
 

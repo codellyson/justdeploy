@@ -1,0 +1,12 @@
+{
+  "name": "justdeploy-screenshots",
+  "private": true,
+  "type": "module",
+  "description": "Headless-Chrome README screenshots of the JustDeploy dashboard",
+  "scripts": {
+    "shoot": "node shoot.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^23.0.0"
+  }
+}
