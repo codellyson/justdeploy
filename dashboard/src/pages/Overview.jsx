@@ -4,7 +4,15 @@ import { api } from '../api';
 import { useVersion, invalidate } from '../lib/store';
 import { toast } from '../components/toast';
 import { StatusDot, TypeBadge, Mono, Spinner } from '../components/ui';
+import { Icon } from '../components/icons';
 import { appHealth, shortSha, timeAgo, cx } from '../lib/format';
+
+// Small status indicator for a deploy result.
+function DeployGlyph({ status }) {
+  if (status === 'ok') return <Icon.Check className="h-3.5 w-3.5 text-success" />;
+  if (status === 'failed') return <Icon.X className="h-3.5 w-3.5 text-danger" />;
+  return <span className="inline-block h-1.5 w-1.5 rounded-full bg-warning pulse-dot" />;
+}
 
 function Stat({ value, label, tone }) {
   return (
@@ -14,8 +22,6 @@ function Stat({ value, label, tone }) {
     </div>
   );
 }
-
-const DEPLOY_ICON = { ok: '✓', running: '•', failed: '✕', idle: '·' };
 
 export function Overview() {
   const { openNew } = useOutletContext();
@@ -64,7 +70,7 @@ export function Overview() {
               const h = appHealth(a);
               return (
                 <Link key={a.name} to={`/apps/${a.name}`} className="flex items-center gap-2 text-sm text-secondary transition hover:text-primary">
-                  <span className={cx('w-3 text-center', h === 'ok' ? 'text-success' : h === 'failed' ? 'text-danger' : 'text-warning')}>{DEPLOY_ICON[h]}</span>
+                  <span className="grid w-3 place-items-center"><DeployGlyph status={h} /></span>
                   <span className="truncate text-primary">{a.name}</span>
                   {a.lastDeploy.sha && <Mono className="text-muted">{shortSha(a.lastDeploy.sha)}</Mono>}
                   <span className="ml-auto shrink-0 text-xs text-muted">{timeAgo(a.lastDeploy.at)}</span>
@@ -81,7 +87,7 @@ export function Overview() {
         {apps.length === 0 ? (
           <div className="surface flex flex-col items-center gap-3 py-14 text-center">
             <p className="text-secondary">No projects yet.</p>
-            <button onClick={openNew} className="rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-[rgb(var(--accent-text))] transition hover:bg-accent-hover">+ New Project</button>
+            <button onClick={openNew} className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-[rgb(var(--accent-text))] transition hover:bg-accent-hover"><Icon.Plus className="h-4 w-4" /> New Project</button>
           </div>
         ) : (
           <div className="stagger surface-solid divide-y divide-border overflow-hidden">
@@ -97,7 +103,7 @@ export function Overview() {
                   <div className="ml-auto flex items-center gap-3">
                     {a.serve === 'proxy' && <Mono className="hidden text-muted sm:inline">:{a.live_port ?? '—'}</Mono>}
                     <TypeBadge type={a.type} />
-                    <span className="text-muted transition group-hover:text-primary">→</span>
+                    <Icon.ChevronRight className="h-4 w-4 text-muted" />
                   </div>
                 </Link>
               );
@@ -128,14 +134,18 @@ function DbRow({ r }) {
   };
   return (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
-      <span className="text-lg leading-none">🐘</span>
+      <Icon.Database className="h-5 w-5 shrink-0 text-secondary" />
       <div className="min-w-0 flex-1">
         <div className="font-medium">{r.name}</div>
         <Mono className="block truncate text-muted">{(r.conn || '').replace(/:[^:@/]+@/, ':••••@')}</Mono>
       </div>
       <div className="flex items-center gap-2">
-        <button onClick={copy} className="rounded-md border border-border px-2.5 py-1 text-xs text-secondary transition hover:border-accent hover:text-primary">Copy URL</button>
-        <button onClick={del} className="rounded-md border border-border px-2.5 py-1 text-xs text-danger transition hover:border-danger">Delete</button>
+        <button onClick={copy} className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-secondary transition hover:border-accent hover:text-primary">
+          <Icon.Copy className="h-3.5 w-3.5" /> Copy URL
+        </button>
+        <button onClick={del} className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-danger transition hover:border-danger">
+          <Icon.Trash className="h-3.5 w-3.5" /> Delete
+        </button>
       </div>
     </div>
   );

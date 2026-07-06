@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTheme } from '@codellyson/justui/react';
 import { cx } from '../lib/format';
+import { Icon } from './icons';
 
 export function ThemeMenu() {
   const { themeId, mode, themes, setThemeId, toggleMode } = useTheme();
@@ -20,7 +21,7 @@ export function ThemeMenu() {
         title="Theme"
         className="grid h-9 w-9 place-items-center rounded-lg border border-border text-secondary transition hover:border-accent hover:text-primary"
       >
-        <span className="text-base leading-none">{mode === 'dark' ? '◐' : '◑'}</span>
+        {mode === 'dark' ? <Icon.Moon className="h-4 w-4" /> : <Icon.Sun className="h-4 w-4" />}
       </button>
       {open && (
         <div className="animate-rise surface-solid absolute right-0 top-11 z-50 w-56 p-1.5 shadow-2xl">
@@ -28,7 +29,8 @@ export function ThemeMenu() {
             onClick={() => { toggleMode(); }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm text-secondary transition hover:bg-bg hover:text-primary"
           >
-            <span>{mode === 'dark' ? '☀' : '☾'}</span> Switch to {mode === 'dark' ? 'light' : 'dark'}
+            {mode === 'dark' ? <Icon.Sun className="h-4 w-4" /> : <Icon.Moon className="h-4 w-4" />}
+            Switch to {mode === 'dark' ? 'light' : 'dark'}
           </button>
           <div className="my-1 h-px bg-border" />
           {themes.map((t) => (
@@ -45,7 +47,7 @@ export function ThemeMenu() {
                 style={{ background: t.swatch?.[mode] || t.swatch?.dark }}
               />
               {t.label}
-              {t.id === themeId && <span className="ml-auto text-accent">✓</span>}
+              {t.id === themeId && <Icon.Check className="ml-auto h-4 w-4 text-accent" />}
             </button>
           ))}
         </div>

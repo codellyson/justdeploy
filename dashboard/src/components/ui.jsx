@@ -1,4 +1,5 @@
-import { cx, typeMeta } from '../lib/format';
+import { cx, typeLabel } from '../lib/format';
+import { TypeIcon } from './icons';
 
 const DOT = { ok: 'bg-success', running: 'bg-warning', failed: 'bg-danger', idle: 'bg-muted' };
 
@@ -14,11 +15,10 @@ export function StatusDot({ status = 'idle', size = 'h-2 w-2', ring = false, cla
 }
 
 export function TypeBadge({ type }) {
-  const m = typeMeta(type);
   return (
     <span className="chip">
-      <span className="text-[0.85em] leading-none">{m.glyph}</span>
-      {m.label}
+      <TypeIcon type={type} className="h-3.5 w-3.5" />
+      {typeLabel(type)}
     </span>
   );
 }

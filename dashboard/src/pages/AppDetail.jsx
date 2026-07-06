@@ -5,6 +5,7 @@ import { api } from '../api';
 import { useVersion, invalidate } from '../lib/store';
 import { toast } from '../components/toast';
 import { StatusDot, TypeBadge, Mono, Meta, Spinner } from '../components/ui';
+import { Icon } from '../components/icons';
 import { appHealth, shortSha, timeAgo, cx } from '../lib/format';
 
 const TABS = ['Overview', 'Logs', 'Environment', 'Deploys', 'Config'];
@@ -28,7 +29,7 @@ export function AppDetail() {
     return () => { live = false; clearInterval(t); };
   }, [name, v]);
 
-  if (missing) return <div className="py-20 text-center text-muted">App <span className="font-mono text-primary">{name}</span> not found. <Link to="/" className="text-accent">← back</Link></div>;
+  if (missing) return <div className="py-20 text-center text-muted">App <span className="font-mono text-primary">{name}</span> not found. <Link to="/" className="inline-flex items-center gap-1 text-accent"><Icon.ArrowLeft className="h-3.5 w-3.5" /> back</Link></div>;
   if (!app) return <div className="flex justify-center py-20"><Spinner className="h-6 w-6" /></div>;
 
   const h = appHealth(app);
@@ -46,14 +47,14 @@ export function AppDetail() {
     <div className="flex flex-col gap-6">
       {/* header */}
       <div className="flex flex-col gap-4">
-        <Link to="/" className="w-fit text-sm text-muted transition hover:text-primary">← Overview</Link>
+        <Link to="/" className="flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> Overview</Link>
         <div className="flex flex-wrap items-center gap-3">
           <StatusDot status={h} ring size="h-2.5 w-2.5" />
           <h1 className="text-xl font-semibold tracking-tight">{name}</h1>
           <TypeBadge type={app.type} />
           {app.domain && (
-            <a href={`https://${app.domain}`} target="_blank" rel="noreferrer" className="text-sm text-accent hover:underline">
-              {app.domain} ↗
+            <a href={`https://${app.domain}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-accent hover:underline">
+              {app.domain} <Icon.ExternalLink className="h-3.5 w-3.5" />
             </a>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -164,7 +165,7 @@ function EnvTab({ name }) {
         <div key={i} className="flex items-center gap-2">
           <input value={row.k} onChange={upd(i, 'k')} placeholder="KEY" className="w-2/5 rounded-md border border-border bg-bg px-2.5 py-1.5 font-mono text-sm outline-none focus:border-accent" />
           <input value={row.v} onChange={upd(i, 'v')} placeholder="value" className="flex-1 rounded-md border border-border bg-bg px-2.5 py-1.5 font-mono text-sm outline-none focus:border-accent" />
-          <button onClick={() => del(i)} className="px-2 text-muted transition hover:text-danger">✕</button>
+          <button onClick={() => del(i)} title="remove" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted transition hover:text-danger"><Icon.X className="h-4 w-4" /></button>
         </div>
       ))}
       <div className="flex items-center justify-between pt-1">
@@ -185,8 +186,8 @@ function DeploysTab({ name, rollbackTo, onRollback }) {
     <div className="surface-solid divide-y divide-border overflow-hidden">
       {items.map((d) => (
         <div key={d.id} className="flex items-center gap-3 px-4 py-3">
-          <span className={cx('w-4 text-center', d.status === 'success' ? 'text-success' : d.status === 'failed' ? 'text-danger' : 'text-warning')}>
-            {d.status === 'success' ? '✓' : d.status === 'failed' ? '✕' : '•'}
+          <span className="grid w-4 place-items-center">
+            {d.status === 'success' ? <Icon.Check className="h-4 w-4 text-success" /> : d.status === 'failed' ? <Icon.X className="h-4 w-4 text-danger" /> : <span className="h-1.5 w-1.5 rounded-full bg-warning pulse-dot" />}
           </span>
           <Mono className="text-primary">{shortSha(d.sha) || '—'}</Mono>
           <span className="truncate text-sm text-muted">{d.reason || d.message || d.status}</span>

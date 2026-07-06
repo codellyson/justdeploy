@@ -3,7 +3,8 @@ import { Modal, Button, Field } from '@codellyson/justui/react';
 import { api } from '../api';
 import { invalidate } from '../lib/store';
 import { toast } from './toast';
-import { cx, TYPE_META } from '../lib/format';
+import { TypeIcon } from './icons';
+import { cx, typeLabel } from '../lib/format';
 
 const TYPES = ['react', 'vite', 'static', 'adonis', 'nextjs', 'postgres', 'sqlite'];
 const PROXY = ['adonis', 'nextjs'];
@@ -42,12 +43,12 @@ export function NewProject({ open, onClose, onCreated }) {
             key={t}
             onClick={() => { setType(t); setErr(''); }}
             className={cx(
-              'flex flex-col items-center gap-1.5 rounded-lg border px-2 py-3 transition',
-              type === t ? 'border-accent bg-accent/10' : 'border-border bg-bg-secondary/50 hover:border-accent/60',
+              'flex flex-col items-center gap-2 rounded-lg border px-2 py-3 transition',
+              type === t ? 'border-accent bg-accent/10 text-primary' : 'border-border bg-bg-secondary/50 text-secondary hover:border-accent/60',
             )}
           >
-            <span className="text-xl leading-none">{TYPE_META[t].glyph}</span>
-            <span className="text-xs text-secondary">{TYPE_META[t].label}</span>
+            <TypeIcon type={t} className="h-5 w-5" />
+            <span className="text-xs">{typeLabel(t)}</span>
           </button>
         ))}
       </div>

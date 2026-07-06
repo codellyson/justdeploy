@@ -15,16 +15,16 @@ export function timeAgo(iso) {
   return new Date(iso).toLocaleDateString();
 }
 
-export const TYPE_META = {
-  react: { glyph: '⚛', label: 'React' },
-  vite: { glyph: '⚡', label: 'Vite' },
-  static: { glyph: '𝗛', label: 'Static' },
-  adonis: { glyph: '𝗔', label: 'AdonisJS' },
-  nextjs: { glyph: '▲', label: 'Next.js' },
-  postgres: { glyph: '🐘', label: 'Postgres' },
-  sqlite: { glyph: '🗄', label: 'SQLite' },
+export const TYPE_LABEL = {
+  react: 'React',
+  vite: 'Vite',
+  static: 'Static',
+  adonis: 'AdonisJS',
+  nextjs: 'Next.js',
+  postgres: 'Postgres',
+  sqlite: 'SQLite',
 };
-export const typeMeta = (t) => TYPE_META[t] || { glyph: '◆', label: t };
+export const typeLabel = (t) => TYPE_LABEL[t] || t;
 
 // App health for the status system: ok | running | failed | idle.
 export function appHealth(app) {

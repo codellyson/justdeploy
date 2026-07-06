@@ -4,6 +4,7 @@ import { api } from '../api';
 import { ThemeMenu } from './ThemeMenu';
 import { NewProject } from './NewProject';
 import { toast } from './toast';
+import { Icon } from './icons';
 
 function Brand() {
   return (
@@ -37,17 +38,18 @@ export function Shell({ onSignedOut }) {
             <ThemeMenu />
             <button
               onClick={() => setNewOpen(true)}
-              className="rounded-lg bg-accent px-3 py-2 text-sm font-medium text-[rgb(var(--accent-text))] transition hover:bg-accent-hover"
+              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-[rgb(var(--accent-text))] transition hover:bg-accent-hover"
             >
-              <span className="hidden sm:inline">+ New Project</span>
-              <span className="sm:hidden">+ New</span>
+              <Icon.Plus className="h-4 w-4" />
+              <span className="hidden sm:inline">New Project</span>
+              <span className="sm:hidden">New</span>
             </button>
             <button
               onClick={signOut}
               title="Sign out"
               className="grid h-9 w-9 place-items-center rounded-lg border border-border text-secondary transition hover:border-danger hover:text-danger"
             >
-              ⎋
+              <Icon.LogOut className="h-4 w-4" />
             </button>
           </div>
         </div>
