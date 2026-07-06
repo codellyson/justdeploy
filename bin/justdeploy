@@ -19,7 +19,8 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { spawn, execSync } from 'node:child_process';
-import { basename } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as db from '../src/db.js';
 import * as engine from '../src/engine.js';
 import * as caddy from '../src/caddy.js';
@@ -325,6 +326,15 @@ WantedBy=multi-user.target
 `;
 }
 
+const DASH_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'dashboard');
+function buildDashboard() {
+  if (!existsSync(join(DASH_DIR, 'package.json'))) die('dashboard/ source not found');
+  console.log('building dashboard (npm install + vite build)…');
+  execSync('npm install --no-audit --no-fund', { cwd: DASH_DIR, stdio: 'inherit' });
+  execSync('npm run build', { cwd: DASH_DIR, stdio: 'inherit' });
+  console.log('dashboard built → dashboard/dist');
+}
+
 async function cmdDashboard(a) {
   const sub = a._[0];
   const database = db.open();
@@ -335,6 +345,7 @@ async function cmdDashboard(a) {
     start();
     return;
   }
+  if (sub === 'build') { buildDashboard(); return; }
   if (sub === 'password') {
     const pw = a._[1] || randomBytes(9).toString('base64url');
     auth.setAdminPassword(database, pw);
@@ -348,6 +359,7 @@ async function cmdDashboard(a) {
     auth.setAdminPassword(database, pw);
     db.setSetting(database, 'dashboard_domain', a.domain);
     db.setSetting(database, 'dashboard_port', String(port));
+    if (!a['no-build']) buildDashboard(); // build the React UI so dist/ exists
     writeFileSync(DASH_UNIT, dashUnit(port));
     execSync('systemctl daemon-reload');
     execSync('systemctl enable --now justdeploy-dashboard');
@@ -357,7 +369,7 @@ async function cmdDashboard(a) {
     console.log('(save it — reset any time with: justdeploy dashboard password <new>)');
     return;
   }
-  die('usage: justdeploy dashboard <install|serve|password>');
+  die('usage: justdeploy dashboard <install|build|serve|password>');
 }
 
 const [cmd, ...rest] = process.argv.slice(2);

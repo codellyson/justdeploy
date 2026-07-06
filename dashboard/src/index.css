@@ -1,0 +1,76 @@
+@import '@codellyson/justui/tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-bg text-primary font-sans antialiased;
+    /* Faint layered atmosphere so the canvas isn't a flat fill. */
+    background-image:
+      radial-gradient(60rem 60rem at 100% -10%, rgb(var(--accent) / 0.06), transparent 55%),
+      radial-gradient(50rem 50rem at -10% 110%, rgb(var(--accent) / 0.05), transparent 50%);
+    background-attachment: fixed;
+  }
+  ::selection { background: rgb(var(--accent) / 0.28); }
+
+  /* Slim, on-theme scrollbars. */
+  * { scrollbar-width: thin; scrollbar-color: rgb(var(--border)) transparent; }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-thumb { background: rgb(var(--border)); border-radius: 6px; }
+  *::-webkit-scrollbar-thumb:hover { background: rgb(var(--text-muted)); }
+}
+
+@layer components {
+  /* Frosted surface used for cards and panels. */
+  .surface {
+    @apply rounded-xl border border-border;
+    background: rgb(var(--bg-secondary) / 0.6);
+    backdrop-filter: blur(8px);
+  }
+  .surface-solid {
+    @apply rounded-xl border border-border bg-bg-secondary;
+  }
+  .hairline { @apply border-border; }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-0.5 text-xs font-medium text-secondary;
+    background: rgb(var(--bg) / 0.5);
+  }
+  .label-tiny {
+    @apply text-[0.7rem] font-medium uppercase tracking-[0.12em] text-muted;
+  }
+}
+
+/* --- motion --- */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes shimmer { 100% { background-position: 200% 0; } }
+
+.animate-rise { animation: rise 0.42s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.pulse-dot { animation: pulse-dot 1.1s ease-in-out infinite; }
+.spin { animation: spin 0.7s linear infinite; }
+
+/* Staggered reveal for grids/lists — set --i on children. */
+.stagger > * { animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; animation-delay: calc(var(--i, 0) * 45ms); }
+
+.skeleton {
+  background: linear-gradient(90deg, rgb(var(--bg-secondary)) 25%, rgb(var(--border) / 0.5) 37%, rgb(var(--bg-secondary)) 63%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, .animate-rise, .stagger > *, .pulse-dot { animation: none !important; }
+}

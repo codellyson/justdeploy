@@ -2,3 +2,4 @@ node_modules/
 *.db
 *.justdeploy.yml
 smoke.mjs
+dashboard/dist/

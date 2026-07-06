@@ -13,7 +13,11 @@ import * as auth from './auth.js';
 import { TABLE, TYPES, row } from './table.js';
 import { logFile } from './paths.js';
 
-const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), 'public');
+// The built Vite/React dashboard (dashboard/dist). Falls back to the legacy src/public if the
+// app hasn't been built yet, so the server still starts.
+const HERE = dirname(fileURLToPath(import.meta.url));
+const DIST = join(HERE, '..', 'dashboard', 'dist');
+const PUBLIC = existsSync(join(DIST, 'index.html')) ? DIST : join(HERE, 'public');
 const now = () => new Date().toISOString();
 
 const MIME = {
@@ -192,9 +196,13 @@ function streamLog(req, res, name) {
 
 function serveStatic(res, urlPath) {
   const rel = normalize(urlPath === '/' ? '/index.html' : urlPath).replace(/^(\.\.[/\\])+/, '');
-  const file = join(PUBLIC, rel);
+  let file = join(PUBLIC, rel);
+  // SPA fallback: unknown client routes (no file extension) serve index.html so deep links
+  // like /apps/foo work on refresh. Missing real assets still 404.
   if (!file.startsWith(PUBLIC) || !existsSync(file)) {
-    res.writeHead(404); res.end('not found'); return;
+    if (extname(rel)) { res.writeHead(404); res.end('not found'); return; }
+    file = join(PUBLIC, 'index.html');
+    if (!existsSync(file)) { res.writeHead(404); res.end('not found'); return; }
   }
   res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' });
   res.end(readFileSync(file));
@@ -302,13 +310,16 @@ async function api(database, req, res, path) {
   }
 
   // /api/apps/:name/...
-  const m = path.match(/^\/api\/apps\/([a-z0-9-]+)(\/(deploy|logs|env|config|stream|rollback))?$/);
+  const m = path.match(/^\/api\/apps\/([a-z0-9-]+)(\/(deploy|logs|env|config|stream|rollback|deploys))?$/);
   if (m) {
     const name = m[1], sub = m[3];
     if (!db.getApp(database, name)) return send(res, 404, { error: 'no such app' });
 
     if (sub === 'stream' && req.method === 'GET') {
       return streamLog(req, res, name); // SSE — keeps the connection open
+    }
+    if (sub === 'deploys' && req.method === 'GET') {
+      return send(res, 200, { deploys: db.recentDeploys(database, name, 20) });
     }
     if (sub === 'rollback' && req.method === 'POST') {
       const target = db.rollbackTarget(database, name);
