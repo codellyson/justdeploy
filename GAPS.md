@@ -40,7 +40,8 @@ the platform doesn't; a person does, live. Every gap below is an instance of thi
 - **No rollback.** "Redeploy the previous SHA" has no command, no UI, no stored artifact.
 - **Postgres wiring is fake-automatic.** `pg` prints a connection string to hand-copy. The
   `postgres:` config key meant to auto-inject `DATABASE_URL` was never wired.
-- **No backups.** State DB and app data volumes are unbacked. Box dies → everything's gone.
+- ~~**No backups.**~~ **[DONE]** `justdeploy backup` → S3/R2 (state.db + data + pg_dump);
+  `restore` brings it back. See priority #4.
 
 ## Promise vs. reality — RESOLVED
 
@@ -89,6 +90,11 @@ The tradeoff this makes explicit: `state.db` is now the single irreplaceable rec
    export snapshot. **Consequence, now the top open item:** with SQLite as the single record,
    **backups matter** — `state.db` + app data volumes are the only irreplaceable state and are
    currently unbacked. A periodic off-box copy is the missing safety net.
+   **[DONE]** `justdeploy backup` snapshots `state.db` (consistent via `VACUUM INTO`), each
+   app's `data/` dir, and a `pg_dump` of every Postgres, then uploads to a user-configured
+   **S3 / R2** bucket via a zero-dep SigV4 uploader (`src/s3.js`). You bring the bucket
+   (`backup config`) and the interval (own cron/CI, or an optional `--schedule` timer).
+   `justdeploy restore <file> --yes` brings state/data/pg back. Archive is chmod 600 (secrets).
 
 ## The honest framing
 

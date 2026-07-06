@@ -44,6 +44,27 @@ justdeploy set api --release "node ace migration:run --force" --persist tmp
 justdeploy reconcile              # rebuild Caddy config from the db
 ```
 
+### Backups (bring your own S3 / R2)
+
+The source of truth is `state.db`, so back it up off-box. A backup captures `state.db`, each
+app's `data/` dir, and a `pg_dump` of every Postgres — not repos/logs (rebuildable). You bring
+the bucket and choose the interval.
+
+```
+# point at your bucket once (works for AWS S3 and Cloudflare R2)
+justdeploy backup config --endpoint https://<acct>.r2.cloudflarestorage.com \
+  --bucket my-backups --access-key <k> --secret-key <s> [--region auto] [--prefix justdeploy]
+
+justdeploy backup                 # snapshot + upload to your bucket (keeps a local copy too)
+justdeploy backup --local         # snapshot locally only, no upload
+justdeploy backup --keep 7        # local retention: keep newest 7
+justdeploy backup --schedule daily # optional: install a systemd timer at your interval
+                                    #   (or just call `justdeploy backup` from your own cron/CI)
+justdeploy restore <file> --yes   # restore state.db + data dirs + postgres from a backup
+```
+
+The archive is `chmod 600` — it contains secrets (env vars, admin hash, webhook secret).
+
 ### Database-backed apps (migrations + persistence)
 
 Two optional per-app knobs, set at `add`, via `justdeploy set`, or in the dashboard Config panel:
@@ -104,6 +125,8 @@ Core engine complete and **verified end-to-end on a real server** (Ubuntu 24.04 
   dashboard); build/deploy logs stream live to the dashboard ✓
 - **git-push auto-deploy** — a signed webhook (`POST /api/webhook`) redeploys apps matching the
   pushed repo, default-branch only. Enable with `justdeploy webhook` ✓
+- **Backups** — `justdeploy backup` snapshots `state.db` + data dirs + Postgres and uploads to
+  your S3/R2 bucket (zero-dep SigV4); `restore` brings it back. You bring the bucket + interval ✓
 
 **Web dashboard** (Vercel-style control panel) — password login, new-project type-picker,
 deploy/logs/env/delete, Postgres provisioning, and a live theme switcher. Built on the
