@@ -12,7 +12,9 @@ export default function App() {
   const [session, setSession] = useState(null); // { authed, needsSetup } | null while loading
 
   const check = useCallback(() => {
-    api.session().then(setSession).catch(() => setSession({ authed: false }));
+    // /api/session returns 200 even when logged out, so a throw here means the server is
+    // unreachable (restart / network blip) — retry rather than falsely showing the login.
+    api.session().then(setSession).catch(() => setTimeout(check, 2000));
   }, []);
   useEffect(() => { check(); }, [check]);
 

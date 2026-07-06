@@ -31,14 +31,24 @@ export function Overview() {
 
   useEffect(() => {
     let live = true;
-    const load = () => api.state().then((s) => live && setState(s)).catch((e) => live && setErr(e.message));
+    const load = () => api.state()
+      .then((s) => { if (live) { setState(s); setErr(''); } })          // clear stale error on success
+      .catch((e) => { if (live) setErr(e.message); });                  // remember, but keep last-good data
     load();
     const t = setInterval(load, 3500);
     return () => { live = false; clearInterval(t); };
   }, [v]);
 
-  if (err) return <p className="text-sm text-danger">{err}</p>;
-  if (!state) return <div className="flex justify-center py-20"><Spinner className="h-6 w-6" /></div>;
+  // Only block the whole page if we never got data. A transient poll failure keeps the last
+  // good view and shows a subtle "reconnecting" banner instead of blanking everything.
+  if (!state) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-20 text-center">
+        <Spinner className="h-6 w-6" />
+        {err && <span className="text-xs text-muted">can’t reach the server — retrying…</span>}
+      </div>
+    );
+  }
 
   const apps = state.apps.filter((a) => a.serve !== 'resource');
   const proxy = apps.filter((a) => a.serve === 'proxy');
@@ -55,6 +65,11 @@ export function Overview() {
           <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
           <p className="text-sm text-muted">Your fleet at a glance.</p>
         </div>
+        {err && (
+          <span className="flex items-center gap-1.5 text-xs text-warning">
+            <span className="h-1.5 w-1.5 rounded-full bg-warning pulse-dot" /> reconnecting…
+          </span>
+        )}
       </div>
 
       {/* stat row + recent deploys */}
