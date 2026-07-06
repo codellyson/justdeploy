@@ -13,11 +13,9 @@ import * as auth from './auth.js';
 import { TABLE, TYPES, row } from './table.js';
 import { logFile } from './paths.js';
 
-// The built Vite/React dashboard (dashboard/dist). Falls back to the legacy src/public if the
-// app hasn't been built yet, so the server still starts.
+// The built Vite/React dashboard (dashboard/dist). Build it with `justdeploy dashboard build`.
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DIST = join(HERE, '..', 'dashboard', 'dist');
-const PUBLIC = existsSync(join(DIST, 'index.html')) ? DIST : join(HERE, 'public');
+const PUBLIC = join(HERE, '..', 'dashboard', 'dist');
 const now = () => new Date().toISOString();
 
 const MIME = {
@@ -202,7 +200,11 @@ function serveStatic(res, urlPath) {
   if (!file.startsWith(PUBLIC) || !existsSync(file)) {
     if (extname(rel)) { res.writeHead(404); res.end('not found'); return; }
     file = join(PUBLIC, 'index.html');
-    if (!existsSync(file)) { res.writeHead(404); res.end('not found'); return; }
+    if (!existsSync(file)) {
+      res.writeHead(503, { 'Content-Type': 'text/plain' });
+      res.end('Dashboard not built yet — run: justdeploy dashboard build');
+      return;
+    }
   }
   res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' });
   res.end(readFileSync(file));

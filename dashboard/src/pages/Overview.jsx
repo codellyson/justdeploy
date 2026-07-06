@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { api } from '../api';
-import { useVersion } from '../lib/store';
+import { useVersion, invalidate } from '../lib/store';
+import { toast } from '../components/toast';
 import { StatusDot, TypeBadge, Mono, Spinner } from '../components/ui';
 import { appHealth, shortSha, timeAgo, cx } from '../lib/format';
 
@@ -51,11 +52,11 @@ export function Overview() {
       </div>
 
       {/* stat row + recent deploys */}
-      <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr_1.4fr]">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-[1fr_1fr_1fr_1.4fr]">
         <Stat value={apps.length} label="Apps" />
         <Stat value={`${up}/${proxy.length || 0}`} label="Services up" tone={proxy.length && up === proxy.length ? 'text-success' : undefined} />
         <Stat value={state.resources.length} label="Databases" />
-        <div className="surface p-4">
+        <div className="surface col-span-2 p-4 lg:col-span-1">
           <span className="label-tiny">Recent deploys</span>
           <div className="mt-2 flex flex-col gap-1.5">
             {recent.length === 0 && <span className="text-sm text-muted">nothing yet</span>}
@@ -110,16 +111,32 @@ export function Overview() {
         <section>
           <h2 className="label-tiny mb-3">Databases</h2>
           <div className="surface-solid divide-y divide-border overflow-hidden">
-            {state.resources.map((r) => (
-              <div key={r.name} className="flex items-center gap-3 px-4 py-3.5">
-                <span className="text-lg leading-none">🐘</span>
-                <span className="font-medium">{r.name}</span>
-                <Mono className="ml-auto truncate text-muted">{(r.conn || '').replace(/:[^:@/]+@/, ':••••@')}</Mono>
-              </div>
-            ))}
+            {state.resources.map((r) => <DbRow key={r.name} r={r} />)}
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+function DbRow({ r }) {
+  const copy = () => { navigator.clipboard?.writeText(r.conn || ''); toast('connection string copied', 'success'); };
+  const del = async () => {
+    if (!confirm(`Delete database ${r.name} and its data volume? This cannot be undone.`)) return;
+    try { await api.removeResource(r.name); invalidate(); toast(`${r.name} removed`); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
+      <span className="text-lg leading-none">🐘</span>
+      <div className="min-w-0 flex-1">
+        <div className="font-medium">{r.name}</div>
+        <Mono className="block truncate text-muted">{(r.conn || '').replace(/:[^:@/]+@/, ':••••@')}</Mono>
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={copy} className="rounded-md border border-border px-2.5 py-1 text-xs text-secondary transition hover:border-accent hover:text-primary">Copy URL</button>
+        <button onClick={del} className="rounded-md border border-border px-2.5 py-1 text-xs text-danger transition hover:border-danger">Delete</button>
+      </div>
     </div>
   );
 }
