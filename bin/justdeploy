@@ -1,0 +1,297 @@
+#!/usr/bin/env node
+// JustDeploy CLI — the primary interface. No forms: config is a file you own.
+//
+//   justdeploy add <repo> --type T --domain D [--name N]   register + write config, then deploy
+//   justdeploy deploy [name]                                run the deploy loop
+//   justdeploy ls                                           list apps and their state
+//   justdeploy logs <name> [-f]                             tail an app's log
+//   justdeploy env <name> [KEY=VAL ...]                     list or set env vars
+//   justdeploy pg <name>                                    provision a Postgres resource
+//   justdeploy rm <name> [--keep-data]                      tear down an app or resource
+//   justdeploy rollback <name>                              redeploy the previous successful commit
+//   justdeploy set <name> [--release "cmd"] [--persist a,b] configure release cmd / persisted dirs
+//   justdeploy webhook [--rotate]                           enable git-push auto-deploy; print setup
+//   justdeploy dashboard install --domain D [--password P]  set up the web control panel
+//   justdeploy reconcile                                    rebuild Caddy config from the DB
+import { randomBytes } from 'node:crypto';
+import { existsSync, writeFileSync } from 'node:fs';
+import { spawn, execSync } from 'node:child_process';
+import { basename } from 'node:path';
+import * as db from '../src/db.js';
+import * as engine from '../src/engine.js';
+import * as caddy from '../src/caddy.js';
+import * as pg from '../src/postgres.js';
+import * as auth from '../src/auth.js';
+import { row, TYPES } from '../src/table.js';
+import { logFile } from '../src/paths.js';
+import * as config from '../src/config.js';
+
+const now = () => new Date().toISOString();
+
+function flags(argv) {
+  const out = { _: [] };
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith('--')) out[argv[i].slice(2)] = argv[++i];
+    else if (argv[i] === '-f') out.follow = true;
+    else out._.push(argv[i]);
+  }
+  return out;
+}
+
+function die(msg) {
+  console.error(`error: ${msg}`);
+  process.exit(1);
+}
+
+async function cmdAdd(a) {
+  const repo = a._[0];
+  const name = a.name || (repo ? basename(repo, '.git') : null);
+  if (!TYPES.includes(a.type)) die(`--type must be one of: ${TYPES.join(', ')}`);
+  if (!name) die('provide a repo URL or --name');
+  const serve = row(a.type).serve;
+  if (serve !== 'resource' && serve !== 'file' && !a.domain) die('--domain is required');
+
+  const database = db.open();
+  // Validate the shape; the record lives in the state db (source of truth), not a yml file.
+  config.validate({ name, type: a.type, domain: a.domain, repo, release: a.release, persist: a.persist });
+  db.upsertApp(database, {
+    name, type: a.type, domain: a.domain, repo, serve,
+    release_cmd: a.release ?? null, persist: a.persist ?? null, created_at: now(),
+  });
+
+  // Type-specific auto-fill so the documented traps never happen.
+  if (a.type === 'adonis') {
+    db.setEnv(database, name, 'APP_KEY', randomBytes(32).toString('base64url'));
+  }
+  if (a.type === 'sqlite' || serve === 'file') engine.ensureDataDir(name);
+
+  console.log(`registered ${name} (${a.type}${a.domain ? ' → ' + a.domain : ''})`);
+
+  if (serve === 'static' || serve === 'proxy') {
+    console.log('deploying...');
+    await cmdDeploy({ _: [name] });
+  }
+}
+
+async function cmdDeploy(a) {
+  const database = db.open();
+  const apps = a._[0] ? [db.getApp(database, a._[0])] : db.listApps(database);
+  if (!apps[0]) die('no app to deploy');
+  for (const app of apps.filter((x) => x && (x.serve === 'static' || x.serve === 'proxy'))) {
+    process.stdout.write(`deploy ${app.name} ... `);
+    try {
+      const { sha } = await engine.deploy(database, app.name);
+      console.log(`ok${sha ? ' (' + sha.slice(0, 7) + ')' : ''}`);
+    } catch (e) {
+      console.log('FAILED');
+      if (e.reason) {
+        console.error(`\nwhy: ${e.reason}`);
+        if (e.hint) console.error(`fix: ${e.hint.replaceAll('<app>', app.name)}`);
+        console.error('\nlogs: justdeploy logs ' + app.name);
+      }
+      process.exit(1);
+    }
+  }
+}
+
+function cmdLs() {
+  const database = db.open();
+  const apps = db.listApps(database);
+  if (!apps.length) return console.log('no apps yet — try: justdeploy add <repo> --type vite --domain example.com');
+  for (const a of apps) {
+    const where = a.serve === 'proxy' ? `:${a.live_port ?? '-'} pid ${a.live_pid ?? '-'}` : a.serve;
+    console.log(`${a.name.padEnd(20)} ${a.type.padEnd(8)} ${(a.domain || '').padEnd(24)} ${where}`);
+  }
+}
+
+function cmdLogs(a) {
+  const name = a._[0];
+  if (!name) die('usage: justdeploy logs <name> [-f]');
+  const lf = logFile(name);
+  if (!existsSync(lf)) die(`no log yet for ${name}`);
+  const args = a.follow ? ['-n', '200', '-f', lf] : ['-n', '200', lf];
+  spawn('tail', args, { stdio: 'inherit' });
+}
+
+function cmdEnv(a) {
+  const name = a._[0];
+  if (!name) die('usage: justdeploy env <name> [KEY=VAL ...]');
+  const database = db.open();
+  if (!db.getApp(database, name)) die(`no such app: ${name}`);
+  const sets = a._.slice(1);
+  if (!sets.length) {
+    const env = db.getEnv(database, name);
+    for (const [k, v] of Object.entries(env)) console.log(`${k}=${v}`);
+    return;
+  }
+  for (const kv of sets) {
+    const eq = kv.indexOf('=');
+    if (eq === -1) die(`bad KEY=VAL: ${kv}`);
+    db.setEnv(database, name, kv.slice(0, eq), kv.slice(eq + 1));
+  }
+  console.log(`set ${sets.length} var(s) — redeploy for them to take effect`);
+}
+
+function cmdPg(a) {
+  const name = a._[0];
+  if (!name) die('usage: justdeploy pg <name>');
+  const database = db.open();
+  const { container, conn } = pg.provision(database, name);
+  console.log(`provisioned ${container}`);
+  console.log(`connection string (add to an app's env as DATABASE_URL):\n  ${conn}`);
+}
+
+async function cmdRm(a) {
+  const name = a._[0];
+  if (!name) die('usage: justdeploy rm <name> [--keep-data]');
+  const keepData = 'keep-data' in a;
+  const database = db.open();
+
+  if (db.getApp(database, name)) {
+    await engine.destroy(database, name, { keepData });
+    console.log(`removed ${name}${keepData ? ' (kept data/)' : ''}`);
+    return;
+  }
+  const res = db.getResource(database, name);
+  if (res && res.kind === 'postgres') {
+    const { volume, keptData } = pg.deprovision(database, name, { keepData });
+    console.log(`removed ${name}${keptData ? ` (kept volume ${volume})` : ` + volume ${volume}`}`);
+    return;
+  }
+  die(`no such app or resource: ${name}`);
+}
+
+async function cmdRollback(a) {
+  const name = a._[0];
+  if (!name) die('usage: justdeploy rollback <name>');
+  const database = db.open();
+  if (!db.getApp(database, name)) die(`no such app: ${name}`);
+  const target = db.rollbackTarget(database, name);
+  if (!target) die('no previous successful deploy to roll back to');
+  process.stdout.write(`rolling back ${name} to ${target.slice(0, 7)} ... `);
+  try {
+    await engine.deploy(database, name, { sha: target });
+    console.log('ok');
+  } catch (e) {
+    console.log('FAILED');
+    if (e.reason) { console.error(`\nwhy: ${e.reason}`); if (e.hint) console.error(`fix: ${e.hint.replaceAll('<app>', name)}`); }
+    process.exit(1);
+  }
+}
+
+function cmdSet(a) {
+  const name = a._[0];
+  if (!name) die('usage: justdeploy set <name> [--release "cmd"] [--persist "a,b"] [--health-path /p]');
+  const database = db.open();
+  if (!db.getApp(database, name)) die(`no such app: ${name}`);
+  const f = {};
+  if ('release' in a) f.release_cmd = a.release || null;
+  if ('persist' in a) f.persist = a.persist || null;
+  if ('health-path' in a) f.health_path = a['health-path'] || '/';
+  if (!Object.keys(f).length) die('nothing to set — pass --release, --persist, or --health-path');
+  db.updateAppConfig(database, name, f);
+  console.log(`updated ${name} — redeploy to apply`);
+}
+
+function cmdWebhook(a) {
+  const database = db.open();
+  let secret = db.getSetting(database, 'webhook_secret');
+  if (!secret || 'rotate' in a) {
+    secret = randomBytes(24).toString('hex');
+    db.setSetting(database, 'webhook_secret', secret);
+  }
+  const domain = db.getSetting(database, 'dashboard_domain');
+  const base = domain ? `https://${domain}` : 'https://<dashboard-domain>';
+  console.log(`Webhook URL : ${base}/api/webhook`);
+  console.log(`Secret      : ${secret}`);
+  console.log('\nGitHub → repo Settings → Webhooks → Add webhook:');
+  console.log(`  Payload URL   ${base}/api/webhook`);
+  console.log('  Content type  application/json');
+  console.log(`  Secret        ${secret}`);
+  console.log('  Events        Just the push event');
+  console.log(`\nProviders without HMAC signing can POST to:\n  ${base}/api/webhook/${secret}`);
+  console.log('\nOnly pushes to a repo\'s default branch trigger a deploy. Rotate: justdeploy webhook --rotate');
+}
+
+async function cmdReconcile() {
+  const database = db.open();
+  await caddy.applyFromDb(database);
+  console.log('caddy config rebuilt from db');
+}
+
+const DASH_UNIT = '/etc/systemd/system/justdeploy-dashboard.service';
+function dashUnit(port) {
+  return `[Unit]
+Description=JustDeploy dashboard
+After=network.target caddy.service
+
+[Service]
+Type=simple
+Environment=PORT=${port}
+ExecStart=/usr/local/bin/justdeploy dashboard serve
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+`;
+}
+
+async function cmdDashboard(a) {
+  const sub = a._[0];
+  const database = db.open();
+
+  if (sub === 'serve') {
+    // Runs the HTTP server (invoked by systemd). Keeps the process alive.
+    const { start } = await import('../src/dashboard.js');
+    start();
+    return;
+  }
+  if (sub === 'password') {
+    const pw = a._[1] || randomBytes(9).toString('base64url');
+    auth.setAdminPassword(database, pw);
+    console.log(`admin password set: ${pw}`);
+    return;
+  }
+  if (sub === 'install') {
+    if (!a.domain) die('usage: justdeploy dashboard install --domain <d> [--port 4999] [--password <p>]');
+    const port = a.port ? Number(a.port) : 4999;
+    const pw = a.password || randomBytes(9).toString('base64url');
+    auth.setAdminPassword(database, pw);
+    db.setSetting(database, 'dashboard_domain', a.domain);
+    db.setSetting(database, 'dashboard_port', String(port));
+    writeFileSync(DASH_UNIT, dashUnit(port));
+    execSync('systemctl daemon-reload');
+    execSync('systemctl enable --now justdeploy-dashboard');
+    await caddy.applyFromDb(database); // add the dashboard's TLS route
+    console.log(`dashboard installed  → https://${a.domain}`);
+    console.log(`admin password       → ${pw}`);
+    console.log('(save it — reset any time with: justdeploy dashboard password <new>)');
+    return;
+  }
+  die('usage: justdeploy dashboard <install|serve|password>');
+}
+
+const [cmd, ...rest] = process.argv.slice(2);
+const a = flags(rest);
+try {
+  switch (cmd) {
+    case 'add': await cmdAdd(a); break;
+    case 'deploy': await cmdDeploy(a); break;
+    case 'ls': cmdLs(); break;
+    case 'logs': cmdLogs(a); break;
+    case 'env': cmdEnv(a); break;
+    case 'pg': cmdPg(a); break;
+    case 'rm': case 'destroy': await cmdRm(a); break;
+    case 'rollback': await cmdRollback(a); break;
+    case 'set': cmdSet(a); break;
+    case 'webhook': cmdWebhook(a); break;
+    case 'dashboard': await cmdDashboard(a); break;
+    case 'reconcile': await cmdReconcile(); break;
+    default:
+      console.log('usage: justdeploy <add|deploy|ls|logs|env|pg|rm|rollback|set|webhook|dashboard|reconcile>');
+      process.exit(cmd ? 1 : 0);
+  }
+} catch (e) {
+  die(e.message);
+}

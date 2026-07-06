@@ -1,0 +1,15 @@
+{
+  "name": "justdeploy",
+  "version": "0.1.0",
+  "description": "Lean single-server deploy tool for a fixed menu of app types",
+  "type": "module",
+  "bin": {
+    "justdeploy": "bin/justdeploy"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

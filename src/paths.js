@@ -1,0 +1,22 @@
+// Filesystem conventions. Hardcoded on purpose — this is a single-user, single-box tool.
+import { join } from 'node:path';
+
+// Where the tool keeps its own state (SQLite index, nothing precious — rebuildable).
+export const HOME = process.env.JUSTDEPLOY_HOME || '/var/lib/justdeploy';
+export const STATE_DB = join(HOME, 'state.db');
+
+// Where apps live. Each app gets /srv/<name>/{repo,data,logs}.
+export const SRV = process.env.JUSTDEPLOY_SRV || '/srv';
+
+export const repoDir = (name) => join(SRV, name, 'repo');
+export const dataDir = (name) => join(SRV, name, 'data'); // persists across deploys (SQLite dbs, uploads)
+export const logFile = (name) => join(SRV, name, 'logs', 'app.log');
+
+// Caddy admin API — driven live, no config file on disk, no SIGHUP.
+export const CADDY_ADMIN = process.env.CADDY_ADMIN || 'http://localhost:2019';
+
+// Shared Docker network so apps reach Postgres by container name, nothing published to host.
+export const DOCKER_NET = 'deploy-net';
+
+// Proxy apps get ports assigned from here upward.
+export const PORT_BASE = 4000;
