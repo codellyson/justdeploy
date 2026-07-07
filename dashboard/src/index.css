@@ -27,24 +27,50 @@
 }
 
 @layer components {
-  /* Frosted surface used for cards and panels. */
+  /* Elevated card surface used across panels. */
   .surface {
-    @apply rounded-xl border border-border;
-    background: rgb(var(--bg-secondary) / 0.6);
-    backdrop-filter: blur(8px);
+    @apply rounded-2xl border border-border bg-bg-secondary;
+    box-shadow: var(--jd-shadow);
   }
   .surface-solid {
-    @apply rounded-xl border border-border bg-bg-secondary;
+    @apply rounded-2xl border border-border bg-bg-secondary;
+    box-shadow: var(--jd-shadow);
   }
+  /* A subtly-raised inset surface (hover rows, inputs, chips). */
+  .surface-2 { background: rgb(var(--text-primary) / 0.04); }
   .hairline { @apply border-border; }
   .chip {
-    @apply inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-0.5 text-xs font-medium text-secondary;
-    background: rgb(var(--bg) / 0.5);
+    @apply inline-flex items-center gap-1.5 rounded-lg border border-border px-2 py-0.5 text-xs font-medium text-secondary;
+    background: rgb(var(--text-primary) / 0.03);
   }
   .label-tiny {
-    @apply text-[0.7rem] font-medium uppercase tracking-[0.12em] text-muted;
+    @apply text-[0.68rem] font-semibold uppercase tracking-[0.09em] text-muted;
+  }
+  /* Field: consistent input styling with an accent focus ring. */
+  .field {
+    @apply w-full rounded-xl border border-border bg-bg px-3 py-2.5 text-sm text-primary outline-none transition;
+  }
+  .field:focus {
+    border-color: rgb(var(--accent));
+    box-shadow: 0 0 0 3px rgb(var(--accent) / 0.18);
   }
 }
+
+/* Card shadow (dark-first, subtle in light). */
+:root { --jd-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 30px rgb(0 0 0 / 0.18); }
+html:not(.dark) { --jd-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 10px 30px rgb(0 0 0 / 0.08); }
+
+/* Atmospheric dotted grid (login / preview panels). */
+.jd-grid {
+  background-image:
+    linear-gradient(rgb(var(--border)) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(var(--border)) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(circle at 50% 35%, #000, transparent 70%);
+  mask-image: radial-gradient(circle at 50% 35%, #000, transparent 70%);
+}
+@keyframes jd-stream { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+.jd-stream { animation: jd-stream 0.2s ease both; }
 
 /* --- motion --- */
 @keyframes rise {

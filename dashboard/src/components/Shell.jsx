@@ -1,26 +1,20 @@
-import { useState } from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { ThemeMenu } from './ThemeMenu';
-import { NewProject } from './NewProject';
-import { toast } from './toast';
 import { Icon } from './icons';
 
 function Brand() {
   return (
     <Link to="/" className="group flex items-center gap-2.5">
-      <span className="grid h-7 w-7 place-items-center rounded-md bg-accent font-mono text-sm font-bold text-[rgb(var(--accent-text))] transition group-hover:scale-105">
-        J
+      <span className="grid h-7 w-7 place-items-center rounded-lg bg-accent text-[rgb(var(--accent-text))] shadow-sm shadow-accent/25 transition group-hover:scale-105">
+        <Icon.Zap className="h-4 w-4" />
       </span>
-      <span className="text-[0.95rem] font-semibold tracking-tight">
-        Just<span className="text-muted">Deploy</span>
-      </span>
+      <span className="text-[0.95rem] font-semibold tracking-tight">JustDeploy</span>
     </Link>
   );
 }
 
 export function Shell({ onSignedOut }) {
-  const [newOpen, setNewOpen] = useState(false);
   const navigate = useNavigate();
 
   const signOut = async () => {
@@ -37,8 +31,8 @@ export function Shell({ onSignedOut }) {
           <div className="ml-auto flex items-center gap-2">
             <ThemeMenu />
             <button
-              onClick={() => setNewOpen(true)}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-[rgb(var(--accent-text))] transition hover:bg-accent-hover"
+              onClick={() => navigate('/new')}
+              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"
             >
               <Icon.Plus className="h-4 w-4" />
               <span className="hidden sm:inline">New Project</span>
@@ -47,22 +41,19 @@ export function Shell({ onSignedOut }) {
             <button
               onClick={signOut}
               title="Sign out"
-              className="grid h-9 w-9 place-items-center rounded-lg border border-border text-secondary transition hover:border-danger hover:text-danger"
+              className="group relative grid h-9 w-9 place-items-center rounded-full text-[rgb(var(--accent-text))] transition hover:brightness-105"
+              style={{ background: 'linear-gradient(135deg, rgb(var(--accent)), rgb(var(--accent-hover)))' }}
             >
-              <Icon.LogOut className="h-4 w-4" />
+              <Icon.LogOut className="h-[0.9rem] w-[0.9rem] opacity-0 transition group-hover:opacity-100" />
+              <span className="absolute text-xs font-semibold transition group-hover:opacity-0">A</span>
             </button>
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
-        <Outlet context={{ openNew: () => setNewOpen(true) }} />
+        <Outlet context={{ openNew: () => navigate('/new') }} />
       </main>
-
-      <NewProject open={newOpen} onClose={() => setNewOpen(false)} onCreated={(name, deployed) => {
-        setNewOpen(false);
-        if (deployed) { toast(`deploying ${name}…`); navigate(`/apps/${name}`); }
-      }} />
     </div>
   );
 }

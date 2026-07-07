@@ -1,5 +1,17 @@
 export const cx = (...parts) => parts.filter(Boolean).join(' ');
 
+// Slugify a project name into a DNS/URL-safe label.
+export const slug = (s) => (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
+// A friendly random project name, Vercel-style (adjective-noun).
+const ADJ = ['swift', 'calm', 'bright', 'bold', 'lucky', 'quiet', 'brave', 'fresh', 'noble', 'sunny', 'cosmic', 'amber', 'violet', 'misty', 'silent', 'rapid'];
+const NOUN = ['otter', 'falcon', 'harbor', 'meadow', 'cedar', 'comet', 'ember', 'delta', 'lotus', 'pixel', 'quartz', 'river', 'summit', 'willow', 'aurora', 'nebula'];
+const rand = (a) => a[Math.floor(Math.random() * a.length)];
+export const suggestName = () => `${rand(ADJ)}-${rand(NOUN)}`;
+
+// Derive a project name from a git repo URL (its basename, slugified).
+export const nameFromRepo = (repo) => slug((repo || '').replace(/\.git$/, '').split('/').filter(Boolean).pop() || '');
+
 export const shortSha = (sha) => (sha ? sha.slice(0, 7) : '');
 
 export function timeAgo(iso) {

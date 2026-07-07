@@ -58,7 +58,7 @@ console.log('overview.png');
 
 // new project modal (pick a type so fields show)
 await clickByText(page, /New Project/);
-await page.waitForFunction(() => document.body.innerText.includes('Pick a type'), { timeout: 8000 });
+await page.waitForFunction(() => document.body.innerText.includes('Pick the app type'), { timeout: 8000 });
 await settle(500);
 await clickByText(page, /AdonisJS/);
 await settle(500);
@@ -73,7 +73,7 @@ const app = process.env.JD_APP || await page.evaluate(() => {
 if (app) {
   await page.goto(`${URL}/apps/${app}`, { waitUntil: 'networkidle2' });
   await page.waitForFunction(() => document.body.innerText.includes('Environment'), { timeout: 15000 });
-  await settle(1200);
+  await settle(6500); // let the live site-preview screenshot load
   await page.screenshot({ path: join(OUT, 'app-detail.png') });
   console.log('app-detail.png');
 }

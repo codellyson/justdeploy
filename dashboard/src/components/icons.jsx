@@ -3,6 +3,9 @@
 import {
   LuChevronRight, LuArrowLeft, LuArrowUpRight, LuPlus, LuLogOut, LuSun, LuMoon,
   LuCheck, LuX, LuCopy, LuTrash2, LuRotateCcw, LuTerminal, LuDatabase, LuFileCode2,
+  LuGlobe, LuGitCommitHorizontal, LuGitBranch, LuClock, LuActivity, LuServer,
+  LuLock, LuEye, LuEyeOff, LuTriangleAlert, LuZap, LuRocket, LuLayers, LuSettings2,
+  LuSearch,
 } from 'react-icons/lu';
 import { SiReact, SiVite, SiNextdotjs, SiAdonisjs, SiPostgresql, SiSqlite } from 'react-icons/si';
 
@@ -21,6 +24,21 @@ export const Icon = {
   Rollback: LuRotateCcw,
   Terminal: LuTerminal,
   Database: LuDatabase,
+  Globe: LuGlobe,
+  GitCommit: LuGitCommitHorizontal,
+  GitBranch: LuGitBranch,
+  Clock: LuClock,
+  Activity: LuActivity,
+  Server: LuServer,
+  Lock: LuLock,
+  Eye: LuEye,
+  EyeOff: LuEyeOff,
+  Alert: LuTriangleAlert,
+  Zap: LuZap,
+  Rocket: LuRocket,
+  Layers: LuLayers,
+  Settings: LuSettings2,
+  Search: LuSearch,
 };
 
 const TYPE_ICON = {

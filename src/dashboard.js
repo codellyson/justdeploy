@@ -285,6 +285,9 @@ async function api(database, req, res, path) {
       apps: db.listApps(database).map((a) => appView(database, a)),
       resources: db.listResources(database),
       types: TYPES.map((t) => ({ id: t, serve: TABLE[t].serve })),
+      // Suggest `{name}.{base}` domains — override with a `base_domain` setting, else the
+      // dashboard's own domain (apps are subdomains of it).
+      baseDomain: db.getSetting(database, 'base_domain') || db.getSetting(database, 'dashboard_domain') || null,
     });
   }
 

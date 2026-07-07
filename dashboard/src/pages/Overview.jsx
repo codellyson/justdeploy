@@ -1,25 +1,79 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { api } from '../api';
 import { useVersion, invalidate } from '../lib/store';
 import { toast } from '../components/toast';
-import { StatusDot, TypeBadge, Mono, Spinner } from '../components/ui';
+import { StatusDot, SoftIcon, Avatar, Mono, Spinner, tone, STATUS_META } from '../components/ui';
 import { Icon } from '../components/icons';
 import { appHealth, shortSha, timeAgo, cx } from '../lib/format';
 
-// Small status indicator for a deploy result.
-function DeployGlyph({ status }) {
-  if (status === 'ok') return <Icon.Check className="h-3.5 w-3.5 text-success" />;
-  if (status === 'failed') return <Icon.X className="h-3.5 w-3.5 text-danger" />;
-  return <span className="inline-block h-1.5 w-1.5 rounded-full bg-warning pulse-dot" />;
+function Stat({ icon, label, value, tone: t, sub }) {
+  return (
+    <div className="surface p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <span className="text-sm font-medium text-secondary">{label}</span>
+        <SoftIcon icon={icon} tone={t} />
+      </div>
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-[1.7rem] font-semibold leading-none tracking-tight">{value}</span>
+        {sub && <span className="text-xs text-muted">{sub}</span>}
+      </div>
+    </div>
+  );
 }
 
-function Stat({ value, label, tone }) {
+function ProjectCard({ a }) {
+  const h = appHealth(a);
+  const m = STATUS_META[h];
+  const d = a.lastDeploy;
+  const line = a.deploying ? 'Deploying…'
+    : d ? (d.status === 'failed' ? (d.reason || 'Deploy failed') : `Deployed ${shortSha(d.sha) || ''}`.trim())
+      : 'Never deployed';
   return (
-    <div className="surface flex flex-col gap-1 p-4">
-      <span className={cx('font-mono text-2xl font-semibold tracking-tight', tone || 'text-primary')}>{value}</span>
-      <span className="label-tiny">{label}</span>
-    </div>
+    <Link to={`/apps/${a.name}`} className="surface flex flex-col gap-3 p-4 transition hover:border-muted/40 hover:shadow-lg">
+      <div className="flex items-center gap-3">
+        <Avatar type={a.type} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-semibold">{a.name}</div>
+          <div className="truncate font-mono text-xs text-secondary">{a.domain || a.serve}</div>
+        </div>
+        <StatusDot status={h} ring size="h-2.5 w-2.5" />
+      </div>
+      <div className="flex flex-col gap-2 border-t border-border pt-3">
+        <div className="flex items-center gap-2 text-sm text-secondary">
+          <Icon.GitCommit className="h-3.5 w-3.5 shrink-0 text-muted" />
+          <span className="truncate">{line}</span>
+        </div>
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <span className={cx('font-medium', tone(m.tone).text)}>{m.label}</span>
+          <span className="flex items-center gap-1.5 font-mono text-muted">
+            {a.serve === 'proxy' && a.live_port ? <>:{a.live_port}</> : null}
+            {d?.at && <><span className="text-muted/60">·</span>{timeAgo(d.at)}</>}
+          </span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function ActivityRow({ a }) {
+  const h = appHealth(a);
+  const meta = h === 'failed'
+    ? { icon: Icon.Alert, tone: 'danger', text: 'Deploy failed —' }
+    : h === 'running'
+      ? { icon: Icon.Rocket, tone: 'accent', text: 'Deploying' }
+      : { icon: Icon.Check, tone: 'success', text: 'Deployed' };
+  return (
+    <Link to={`/apps/${a.name}`} className="flex items-center gap-3 rounded-xl px-3 py-2.5 transition hover:surface-2">
+      <SoftIcon icon={meta.icon} tone={meta.tone} />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm">
+          {meta.text} <span className="font-mono text-primary">{a.name}</span>
+          {a.lastDeploy?.sha && <span className="ml-1.5 font-mono text-xs text-muted">{shortSha(a.lastDeploy.sha)}</span>}
+        </div>
+        <div className="text-xs text-muted">{timeAgo(a.lastDeploy?.at)}</div>
+      </div>
+    </Link>
   );
 }
 
@@ -28,19 +82,29 @@ export function Overview() {
   const v = useVersion();
   const [state, setState] = useState(null);
   const [err, setErr] = useState('');
+  const [q, setQ] = useState('');
 
   useEffect(() => {
     let live = true;
     const load = () => api.state()
-      .then((s) => { if (live) { setState(s); setErr(''); } })          // clear stale error on success
-      .catch((e) => { if (live) setErr(e.message); });                  // remember, but keep last-good data
+      .then((s) => { if (live) { setState(s); setErr(''); } })
+      .catch((e) => { if (live) setErr(e.message); });
     load();
     const t = setInterval(load, 3500);
     return () => { live = false; clearInterval(t); };
   }, [v]);
 
-  // Only block the whole page if we never got data. A transient poll failure keeps the last
-  // good view and shows a subtle "reconnecting" banner instead of blanking everything.
+  const derived = useMemo(() => {
+    if (!state) return null;
+    const apps = state.apps.filter((a) => a.serve !== 'resource');
+    const proxy = apps.filter((a) => a.serve === 'proxy');
+    const up = proxy.filter((a) => a.live_pid && appHealth(a) !== 'failed').length;
+    const anyFailed = apps.some((a) => appHealth(a) === 'failed');
+    const recent = apps.filter((a) => a.lastDeploy).sort((a, b) => new Date(b.lastDeploy.at) - new Date(a.lastDeploy.at)).slice(0, 5);
+    const filtered = apps.filter((a) => !q || a.name.toLowerCase().includes(q.toLowerCase()) || (a.domain || '').toLowerCase().includes(q.toLowerCase()));
+    return { apps, proxy, up, anyFailed, recent, filtered };
+  }, [state, q]);
+
   if (!state) {
     return (
       <div className="flex flex-col items-center gap-2 py-20 text-center">
@@ -50,88 +114,74 @@ export function Overview() {
     );
   }
 
-  const apps = state.apps.filter((a) => a.serve !== 'resource');
-  const proxy = apps.filter((a) => a.serve === 'proxy');
-  const up = proxy.filter((a) => a.live_pid && appHealth(a) !== 'failed').length;
-  const recent = apps
-    .filter((a) => a.lastDeploy)
-    .sort((a, b) => new Date(b.lastDeploy.at) - new Date(a.lastDeploy.at))
-    .slice(0, 5);
+  const { apps, proxy, up, anyFailed, recent, filtered } = derived;
 
   return (
-    <div className="flex flex-col gap-8">
-      <div className="flex items-end justify-between">
+    <div className="animate-rise flex flex-col gap-7">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
-          <p className="text-sm text-muted">Your fleet at a glance.</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
+          <p className="mt-0.5 text-sm text-muted">Your fleet at a glance.</p>
         </div>
-        {err && (
-          <span className="flex items-center gap-1.5 text-xs text-warning">
-            <span className="h-1.5 w-1.5 rounded-full bg-warning pulse-dot" /> reconnecting…
-          </span>
-        )}
+        <span className={cx('inline-flex items-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs', anyFailed ? 'text-warning' : 'text-secondary')}>
+          <span className={cx('h-1.5 w-1.5 rounded-full pulse-dot', anyFailed ? 'bg-warning' : 'bg-success')} />
+          {anyFailed ? 'Attention needed' : 'All systems operational'}
+        </span>
       </div>
 
-      {/* stat row + recent deploys */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-[1fr_1fr_1fr_1.4fr]">
-        <Stat value={apps.length} label="Apps" />
-        <Stat value={`${up}/${proxy.length || 0}`} label="Services up" tone={proxy.length && up === proxy.length ? 'text-success' : undefined} />
-        <Stat value={state.resources.length} label="Databases" />
-        <div className="surface col-span-2 p-4 lg:col-span-1">
-          <span className="label-tiny">Recent deploys</span>
-          <div className="mt-2 flex flex-col gap-1.5">
-            {recent.length === 0 && <span className="text-sm text-muted">nothing yet</span>}
-            {recent.map((a) => {
-              const h = appHealth(a);
-              return (
-                <Link key={a.name} to={`/apps/${a.name}`} className="flex items-center gap-2 text-sm text-secondary transition hover:text-primary">
-                  <span className="grid w-3 place-items-center"><DeployGlyph status={h} /></span>
-                  <span className="truncate text-primary">{a.name}</span>
-                  {a.lastDeploy.sha && <Mono className="text-muted">{shortSha(a.lastDeploy.sha)}</Mono>}
-                  <span className="ml-auto shrink-0 text-xs text-muted">{timeAgo(a.lastDeploy.at)}</span>
-                </Link>
-              );
-            })}
-          </div>
-        </div>
+      {/* stat cards */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        <Stat icon={Icon.Layers} tone="accent" label="Apps" value={apps.length} />
+        <Stat icon={Icon.Server} tone={proxy.length && up === proxy.length ? 'success' : 'warning'} label="Services up" value={`${up}/${proxy.length || 0}`} />
+        <Stat icon={Icon.Database} tone="accent" label="Databases" value={state.resources.length} />
       </div>
 
-      {/* apps */}
+      {/* projects */}
       <section>
-        <h2 className="label-tiny mb-3">Apps</h2>
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <h2 className="text-base font-semibold">Projects</h2>
+          <span className="rounded-md bg-[rgb(var(--text-primary)/0.05)] px-1.5 py-0.5 font-mono text-xs text-muted">{apps.length}</span>
+          <div className="flex-1" />
+          {apps.length > 0 && (
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"><Icon.Search className="h-3.5 w-3.5" /></span>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search projects…" className="field w-56 max-w-[48vw] py-2 pl-9 text-sm" />
+            </div>
+          )}
+        </div>
+
         {apps.length === 0 ? (
-          <div className="surface flex flex-col items-center gap-3 py-14 text-center">
+          <div className="surface flex flex-col items-center gap-3 py-16 text-center">
+            <SoftIcon icon={Icon.Rocket} tone="accent" size="h-11 w-11" />
             <p className="text-secondary">No projects yet.</p>
-            <button onClick={openNew} className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-sm font-medium text-[rgb(var(--accent-text))] transition hover:bg-accent-hover"><Icon.Plus className="h-4 w-4" /> New Project</button>
+            <button onClick={openNew} className="flex items-center gap-1.5 rounded-xl bg-accent px-3.5 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"><Icon.Plus className="h-4 w-4" /> New Project</button>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border py-14 text-center text-sm text-muted">
+            No projects match “<span className="text-primary">{q}</span>”.
           </div>
         ) : (
-          <div className="stagger surface-solid divide-y divide-border overflow-hidden">
-            {apps.map((a, i) => {
-              const h = appHealth(a);
-              return (
-                <Link key={a.name} to={`/apps/${a.name}`} style={{ '--i': i }} className="flex items-center gap-3 px-4 py-3.5 transition hover:bg-bg-secondary/60">
-                  <StatusDot status={h} ring />
-                  <div className="min-w-0">
-                    <div className="truncate font-medium">{a.name}</div>
-                    <div className="truncate text-xs text-muted">{a.domain || a.serve}</div>
-                  </div>
-                  <div className="ml-auto flex items-center gap-3">
-                    {a.serve === 'proxy' && <Mono className="hidden text-muted sm:inline">:{a.live_port ?? '—'}</Mono>}
-                    <TypeBadge type={a.type} />
-                    <Icon.ChevronRight className="h-4 w-4 text-muted" />
-                  </div>
-                </Link>
-              );
-            })}
+          <div className="stagger grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filtered.map((a, i) => <div key={a.name} style={{ '--i': i }}><ProjectCard a={a} /></div>)}
           </div>
         )}
       </section>
 
+      {/* activity */}
+      {recent.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-base font-semibold">Recent activity</h2>
+          <div className="surface grid grid-cols-1 gap-0.5 p-1.5 sm:grid-cols-2">
+            {recent.map((a) => <ActivityRow key={a.name} a={a} />)}
+          </div>
+        </section>
+      )}
+
       {/* databases */}
       {state.resources.length > 0 && (
         <section>
-          <h2 className="label-tiny mb-3">Databases</h2>
-          <div className="surface-solid divide-y divide-border overflow-hidden">
+          <h2 className="mb-3 text-base font-semibold">Databases</h2>
+          <div className="surface divide-y divide-border overflow-hidden p-0">
             {state.resources.map((r) => <DbRow key={r.name} r={r} />)}
           </div>
         </section>
@@ -149,18 +199,14 @@ function DbRow({ r }) {
   };
   return (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
-      <Icon.Database className="h-5 w-5 shrink-0 text-secondary" />
+      <SoftIcon icon={Icon.Database} tone="accent" />
       <div className="min-w-0 flex-1">
         <div className="font-medium">{r.name}</div>
         <Mono className="block truncate text-muted">{(r.conn || '').replace(/:[^:@/]+@/, ':••••@')}</Mono>
       </div>
       <div className="flex items-center gap-2">
-        <button onClick={copy} className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-secondary transition hover:border-accent hover:text-primary">
-          <Icon.Copy className="h-3.5 w-3.5" /> Copy URL
-        </button>
-        <button onClick={del} className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-danger transition hover:border-danger">
-          <Icon.Trash className="h-3.5 w-3.5" /> Delete
-        </button>
+        <button onClick={copy} className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-secondary transition hover:border-accent hover:text-primary"><Icon.Copy className="h-3.5 w-3.5" /> Copy URL</button>
+        <button onClick={del} className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-danger transition hover:border-danger"><Icon.Trash className="h-3.5 w-3.5" /> Delete</button>
       </div>
     </div>
   );
