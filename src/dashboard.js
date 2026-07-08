@@ -10,6 +10,7 @@ import * as db from './db.js';
 import * as engine from './engine.js';
 import * as proc from './proc.js';
 import * as pg from './postgres.js';
+import * as firewall from './firewall.js';
 import * as auth from './auth.js';
 import * as github from './github.js';
 import { TABLE, TYPES, row } from './table.js';
@@ -255,7 +256,14 @@ export function start({ port = Number(process.env.PORT) || 4999 } = {}) {
     console.log(`justdeploy dashboard on 127.0.0.1:${port}`);
   });
   startSupervisor(database); // keep proxy apps alive across crashes / reboots
+  firewall.reconcile(database); // reinstall DB allowlists (DOCKER-USER is empty after a reboot)
   return server;
+}
+
+// The caller's public IP as seen through Caddy (X-Forwarded-For), for prefilling allowlists.
+function clientIp(req) {
+  const xff = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return xff || (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 }
 
 async function api(database, req, res, path) {
@@ -300,6 +308,10 @@ async function api(database, req, res, path) {
 
   // --- everything below requires auth ---
   if (!authed()) return send(res, 401, { error: 'unauthorized' });
+
+  if (path === '/api/myip' && req.method === 'GET') {
+    return send(res, 200, { ip: clientIp(req) });
+  }
 
   if (path === '/api/state' && req.method === 'GET') {
     return send(res, 200, {
@@ -432,7 +444,7 @@ async function api(database, req, res, path) {
   }
 
   // /api/resources/:name(/logs/stream|/restart|/reset-password)
-  const rm = path.match(/^\/api\/resources\/([a-z0-9-]+)(?:\/(logs\/stream|restart|reset-password))?$/);
+  const rm = path.match(/^\/api\/resources\/([a-z0-9-]+)(?:\/(logs\/stream|restart|reset-password|expose))?$/);
   if (rm) {
     const rname = rm[1], rsub = rm[2];
     if (!db.getResource(database, rname)) return send(res, 404, { error: 'no such resource' });
@@ -444,6 +456,10 @@ async function api(database, req, res, path) {
     }
     if (rsub === 'reset-password' && req.method === 'POST') {
       try { const { conn } = pg.resetPassword(database, rname); return send(res, 200, { ok: true, conn }); } catch (e) { return send(res, 500, { error: e.message }); }
+    }
+    if (rsub === 'expose' && req.method === 'POST') {
+      const { public: isPublic, allowIps } = await body(req);
+      try { const out = pg.setExposure(database, rname, !!isPublic, Array.isArray(allowIps) ? allowIps : []); return send(res, 200, { ok: true, ...out }); } catch (e) { return send(res, 500, { error: e.message }); }
     }
   }
 

@@ -50,6 +50,7 @@ export function open(file = STATE_DB) {
       kind TEXT NOT NULL,
       conn TEXT,
       port INTEGER,
+      allow_ips TEXT,
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS settings (
@@ -64,6 +65,7 @@ export function open(file = STATE_DB) {
     'ALTER TABLE deploys ADD COLUMN reason TEXT',
     'ALTER TABLE deploys ADD COLUMN hint TEXT',
     'ALTER TABLE resources ADD COLUMN port INTEGER',
+    'ALTER TABLE resources ADD COLUMN allow_ips TEXT',
   ]) { try { db.exec(alter); } catch { /* column already exists */ } }
   return db;
 }
@@ -152,6 +154,9 @@ export function removeApp(db, name) {
 
 export const removeResource = (db, name) =>
   db.prepare('DELETE FROM resources WHERE name=?').run(name);
+
+export const setResourceAllow = (db, name, allow_ips) =>
+  db.prepare('UPDATE resources SET allow_ips=? WHERE name=?').run(allow_ips ?? null, name);
 
 export const getEnv = (db, app) => {
   const out = {};

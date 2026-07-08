@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { DOCKER_NET } from './paths.js';
 import * as db from './db.js';
+import * as firewall from './firewall.js';
 
 function docker(argv) {
   const r = spawnSync('docker', argv, { encoding: 'utf8' });
@@ -47,20 +48,65 @@ export function provision(database, name, { dbName = name, password } = {}) {
 
 const CONN_RE = /^postgres:\/\/([^:]+):([^@]+)@([^:/]+):(\d+)\/(.+)$/;
 
-// Full detail for a provisioned Postgres: parsed connection + live container status.
+// The host to hand out for public connection strings — a configured `public_host` (e.g. a
+// domain you point at the box) or the detected public IPv4.
+function publicHost(database) {
+  let h = db.getSetting(database, 'public_host');
+  if (!h) {
+    const r = spawnSync('sh', ['-c', 'curl -s --max-time 4 https://api.ipify.org || hostname -I | awk "{print $1}"'], { encoding: 'utf8' });
+    h = (r.stdout || '').trim();
+    if (h) db.setSetting(database, 'public_host', h);
+  }
+  return h || '127.0.0.1';
+}
+
+// Full detail for a provisioned Postgres, including BOTH a private (localhost) and a public
+// (external host) connection URL — like managed providers. The private URL always works for
+// apps on this box; the public URL only works when the port is published publicly.
 export function info(database, name) {
   const r = db.getResource(database, name);
   if (!r || r.kind !== 'postgres') return null;
   const m = (r.conn || '').match(CONN_RE) || [];
-  const [, user, password, host, port, dbName] = m;
+  const [, user, password, , port, dbName] = m;
   let status = 'unknown', image = '', startedAt = null;
   const insp = spawnSync('docker', ['inspect', name, '--format', '{{.State.Status}}|{{.Config.Image}}|{{.State.StartedAt}}'], { encoding: 'utf8' });
   if (insp.status === 0) { [status, image, startedAt] = insp.stdout.trim().split('|'); }
+  const bindInsp = spawnSync('docker', ['inspect', name, '--format', '{{ (index (index .NetworkSettings.Ports "5432/tcp") 0).HostIp }}'], { encoding: 'utf8' });
+  const isPublic = (bindInsp.stdout || '').trim() === '0.0.0.0';
+  const ph = publicHost(database);
   return {
-    name, kind: 'postgres', conn: r.conn, created_at: r.created_at,
-    host, port: Number(port || r.port), dbName, user, password,
+    name, kind: 'postgres', created_at: r.created_at,
+    port: Number(port || r.port), dbName, user, password,
     status, image, startedAt, running: status === 'running',
+    public: isPublic, publicHost: ph,
+    allowIps: (r.allow_ips || '').split(',').map((s) => s.trim()).filter(Boolean),
+    privateConn: `postgres://${user}:${password}@127.0.0.1:${port}/${dbName}`,
+    publicConn: `postgres://${user}:${password}@${ph}:${port}/${dbName}`,
+    conn: r.conn, // stored (private) — what on-box apps use
   };
+}
+
+// Toggle public exposure. Recreates the container on the same volume (data preserved) with the
+// port bound to 0.0.0.0 (public) or 127.0.0.1 (private). The stored conn stays private — apps
+// on the box always use that; the public URL is for external clients. When public, an optional
+// `allowIps` list installs a DOCKER-USER firewall allowlist (recommended); empty = open.
+export function setExposure(database, name, isPublic, allowIps = []) {
+  const cur = info(database, name);
+  if (!cur) throw new Error('no such database');
+  const base = name.replace(/-db$/, '');
+  const bind = isPublic ? '0.0.0.0' : '127.0.0.1';
+  docker(['rm', '-f', name]); // keep the volume
+  docker([
+    'run', '-d', '--name', name, '--restart', 'unless-stopped',
+    '-e', `POSTGRES_PASSWORD=${cur.password}`, '-e', `POSTGRES_DB=${cur.dbName}`,
+    '-v', `${base}-pgdata:/var/lib/postgresql/data`, '--network', DOCKER_NET,
+    '-p', `${bind}:${cur.port}:5432`, 'postgres:16',
+  ]);
+  const list = isPublic ? (allowIps || []).map((s) => s.trim()).filter(Boolean) : [];
+  db.setResourceAllow(database, name, list.length ? list.join(',') : null);
+  if (isPublic && list.length) firewall.allow(name, cur.port, list);
+  else firewall.clear(name); // private, or public-to-everyone
+  return { public: isPublic, allowIps: list };
 }
 
 // Restart the container.

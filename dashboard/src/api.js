@@ -27,6 +27,8 @@ export const api = {
   removeResource: (name) => req(`/resources/${name}`, { method: 'DELETE' }),
   restartResource: (name) => req(`/resources/${name}/restart`, { method: 'POST' }),
   resetResourcePassword: (name) => req(`/resources/${name}/reset-password`, { method: 'POST' }),
+  exposeResource: (name, isPublic, allowIps = []) => req(`/resources/${name}/expose`, { method: 'POST', body: { public: isPublic, allowIps } }),
+  myIp: () => req('/myip'),
   resourceLogStream: (name) => new EventSource(`/api/resources/${name}/logs/stream`),
 
   // GitHub source connection

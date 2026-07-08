@@ -28,6 +28,22 @@ function Row({ label, value, mono = true, secret = false, copyable = true }) {
   );
 }
 
+function ConnBlock({ label, value, hint, disabled = false, badge }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-2">
+        <span className="label-tiny">{label}</span>
+        {badge && <span className={cx('rounded px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide', badge.tone === 'warning' ? 'bg-warning/[0.16] text-warning' : 'surface-2 text-muted')}>{badge.text}</span>}
+      </div>
+      <div className={cx('flex items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2', disabled && 'opacity-45')}>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs">{value}</span>
+        <button onClick={() => { navigator.clipboard?.writeText(value); toast('connection string copied', 'success'); }} className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted transition hover:text-primary"><Icon.Copy className="h-3.5 w-3.5" /></button>
+      </div>
+      {hint && <span className="text-xs text-muted">{hint}</span>}
+    </div>
+  );
+}
+
 export function DatabaseDetail() {
   const { name } = useParams();
   const navigate = useNavigate();
@@ -36,6 +52,7 @@ export function DatabaseDetail() {
   const [missing, setMissing] = useState(false);
   const [tab, setTab] = useState('Overview');
   const [busy, setBusy] = useState('');
+  const [exposing, setExposing] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -57,6 +74,16 @@ export function DatabaseDetail() {
     catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
   };
   const remove = async () => { if (confirm(`Delete ${name} and its data volume? This cannot be undone.`)) { try { await api.removeResource(name); toast(`${name} removed`); navigate('/'); } catch (e) { toast(e.message, 'error'); } } };
+  const makePrivate = async () => {
+    setBusy('expose');
+    try { await api.exposeResource(name, false, []); invalidate(); toast('now private (localhost only)', 'success'); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
+  };
+  const applyExpose = async (allowIps) => {
+    setBusy('expose');
+    try { await api.exposeResource(name, true, allowIps); invalidate(); toast('now public · external URL ready', 'success'); setExposing(false); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
+  };
 
   return (
     <div className="animate-rise flex flex-col gap-5">
@@ -87,17 +114,20 @@ export function DatabaseDetail() {
       {tab === 'Overview' && (
         <div className="surface flex flex-col gap-5 p-5">
           <div className="grid grid-cols-2 gap-5 sm:grid-cols-3">
-            <Row label="Host" value={r.host} copyable={false} />
             <Row label="Port" value={String(r.port ?? '—')} copyable={false} />
             <Row label="Database" value={r.dbName} />
             <Row label="User" value={r.user} />
             <Row label="Password" value={r.password} secret />
+            <Row label="Version" value={r.image} copyable={false} />
             <Row label="Created" value={r.created_at ? timeAgo(r.created_at) : '—'} mono={false} copyable={false} />
           </div>
-          <div className="border-t border-border pt-4">
-            <Row label="Connection string" value={r.conn} />
+          <div className="flex flex-col gap-4 border-t border-border pt-4">
+            <ConnBlock label="Internal connection URL" value={r.privateConn} hint="For apps running on this server." />
+            <ConnBlock label="External connection URL" value={r.publicConn} disabled={!r.public}
+              badge={r.public ? { text: 'public', tone: 'warning' } : { text: 'off', tone: 'muted' }}
+              hint={r.public ? `Reachable at ${r.publicHost}:${r.port} — for DB explorers and external clients.` : 'Turn on Public access in Settings to use this URL.'} />
           </div>
-          <p className="text-xs text-muted">Add it to an app: <Mono className="text-secondary">justdeploy env &lt;app&gt; DATABASE_URL=…</Mono>, then redeploy.</p>
+          <p className="text-xs text-muted">Add the internal URL to an app: <Mono className="text-secondary">justdeploy env &lt;app&gt; DATABASE_URL=…</Mono>, then redeploy.</p>
         </div>
       )}
 
@@ -113,12 +143,69 @@ export function DatabaseDetail() {
             <div><div className="text-base font-semibold">Rotate password</div><div className="mt-0.5 text-sm text-muted">Generate a new password and copy the updated connection string.</div></div>
             <button onClick={reset} disabled={!!busy} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3.5 py-2 text-sm font-medium transition hover:border-muted/50 disabled:opacity-60"><Icon.Lock className="h-4 w-4" /> {busy === 'reset' ? 'Rotating…' : 'Rotate'}</button>
           </div>
+          <div className={cx('flex flex-col gap-3 rounded-2xl border p-5', r.public ? 'border-warning/40 bg-warning/[0.07]' : 'surface')}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="max-w-md">
+                <div className="flex items-center gap-2 text-base font-semibold">Public access {r.public && <span className="rounded bg-warning/[0.16] px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-warning">on</span>}</div>
+                <div className="mt-0.5 text-sm text-muted">{r.public
+                  ? <>Published on <Mono className="text-secondary">{r.publicHost}:{r.port}</Mono> for external clients.</>
+                  : 'Publish on a public port so external clients (DB explorers) can connect. Off by default; apps on this server use the internal URL either way.'}</div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {r.public && <button onClick={() => setExposing(true)} disabled={!!busy} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-sm font-medium transition hover:border-muted/50 disabled:opacity-60"><Icon.Settings className="h-4 w-4" /> Edit IPs</button>}
+                <button onClick={r.public ? makePrivate : () => setExposing(true)} disabled={!!busy} className={cx('flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-sm font-semibold transition disabled:opacity-60', r.public ? 'border border-border bg-bg-secondary hover:border-muted/50' : 'bg-accent text-[rgb(var(--accent-text))] hover:brightness-[1.06]')}>
+                  <Icon.Globe className="h-4 w-4" /> {busy === 'expose' ? 'Applying…' : r.public ? 'Make private' : 'Make public'}
+                </button>
+              </div>
+            </div>
+            {r.public && (
+              <div className="flex items-center gap-2 border-t border-warning/20 pt-3 text-xs">
+                {r.allowIps?.length
+                  ? <><Icon.Lock className="h-3.5 w-3.5 text-success" /><span className="text-secondary">Restricted to</span> <Mono className="text-primary">{r.allowIps.join(', ')}</Mono></>
+                  : <><Icon.Alert className="h-3.5 w-3.5 text-danger" /><span className="text-danger">Open to the entire internet — no IP allowlist. Anyone can attempt to connect.</span></>}
+              </div>
+            )}
+          </div>
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-danger/30 bg-danger/[0.08] p-5">
             <div><div className="text-base font-semibold text-danger">Delete database</div><div className="mt-0.5 text-sm text-secondary">Permanently remove the container and its data volume. This cannot be undone.</div></div>
             <button onClick={remove} className="flex shrink-0 items-center gap-1.5 rounded-xl bg-danger px-3.5 py-2 text-sm font-semibold text-white transition hover:brightness-110"><Icon.Trash className="h-4 w-4" /> Delete</button>
           </div>
         </div>
       )}
+
+      {exposing && <ExposeModal name={name} current={r.allowIps} busy={busy === 'expose'} onCancel={() => setExposing(false)} onApply={applyExpose} />}
+    </div>
+  );
+}
+
+function ExposeModal({ name, current, busy, onCancel, onApply }) {
+  const [ips, setIps] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    if (current?.length) { setIps(current.join(', ')); setLoaded(true); return; }
+    api.myIp().then((d) => setIps(d.ip ? `${d.ip}/32` : '')).catch(() => {}).finally(() => setLoaded(true));
+  }, []); // eslint-disable-line
+  const list = ips.split(',').map((s) => s.trim()).filter(Boolean);
+  const open = list.length === 0;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4 backdrop-blur-sm" onClick={onCancel}>
+      <div className="surface w-full max-w-lg p-6" onClick={(e) => e.stopPropagation()}>
+        <h3 className="flex items-center gap-2 text-lg font-semibold"><Icon.Globe className="h-5 w-5 text-accent" /> Expose {name} publicly</h3>
+        <p className="mt-1.5 text-sm text-muted">Only these source IPs are allowed through the firewall to the database port — everyone else is dropped. (Docker bypasses <Mono>ufw</Mono>, so this is enforced via a <Mono>DOCKER-USER</Mono> rule.)</p>
+        <label className="label-tiny mt-4 block">Allowed IPs — comma-separated CIDR</label>
+        <input value={ips} onChange={(e) => setIps(e.target.value)} placeholder="203.0.113.4/32, 198.51.100.0/24" className="field mt-1 w-full font-mono text-sm" autoFocus />
+        <div className="mt-2 text-xs">
+          {open
+            ? <span className="flex items-center gap-1.5 text-danger"><Icon.Alert className="h-3.5 w-3.5" /> Empty = open to the entire internet. Strongly discouraged.</span>
+            : <span className="text-muted">{loaded ? 'Prefilled with your current IP. Add more if needed.' : 'Detecting your IP…'}</span>}
+        </div>
+        <div className="mt-6 flex justify-end gap-2">
+          <button onClick={onCancel} className="rounded-xl border border-border px-4 py-2 text-sm font-medium text-secondary transition hover:text-primary">Cancel</button>
+          <button onClick={() => onApply(list)} disabled={busy || !loaded} className={cx('flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold transition disabled:opacity-60', open ? 'bg-danger text-white hover:brightness-110' : 'bg-accent text-[rgb(var(--accent-text))] hover:brightness-[1.06]')}>
+            <Icon.Globe className="h-4 w-4" /> {busy ? 'Applying…' : open ? 'Expose to everyone' : 'Expose to these IPs'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
