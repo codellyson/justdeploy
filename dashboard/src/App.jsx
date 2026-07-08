@@ -5,6 +5,7 @@ import { Shell } from './components/Shell';
 import { Login } from './pages/Login';
 import { Overview } from './pages/Overview';
 import { AppDetail } from './pages/AppDetail';
+import { DatabaseDetail } from './pages/DatabaseDetail';
 import { NewProject } from './pages/NewProject';
 import { ToastHost } from './components/toast';
 import { Spinner } from './components/ui';
@@ -32,6 +33,7 @@ export default function App() {
               <Route path="/" element={<Overview />} />
               <Route path="/new" element={<NewProject />} />
               <Route path="/apps/:name" element={<AppDetail />} />
+              <Route path="/db/:name" element={<DatabaseDetail />} />
               <Route path="*" element={<Overview />} />
             </Route>
           </Routes>

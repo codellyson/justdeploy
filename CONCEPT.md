@@ -154,12 +154,15 @@ docker run -d \
   -e POSTGRES_DB=gobi \
   -v gobi-pgdata:/var/lib/postgresql/data \
   --network deploy-net \
+  -p 127.0.0.1:5433:5432 \
   postgres:16
 ```
 
-Put it on a shared Docker network (`deploy-net`) and do not publish a host port. The app
-joins the same network and reaches it at `gobi-db:5432`. Nothing touches the public
-internet. The named volume is what survives redeploys.
+Correction to the original idea: apps run as **host processes** (not containers on
+`deploy-net`), so a container-internal address like `gobi-db:5432` isn't reachable from
+them. Publish the port to **localhost only** (`-p 127.0.0.1:<port>:5432`) — each database
+gets its own host port from 5433 up — and the connection string uses `127.0.0.1:<port>`.
+Binding to 127.0.0.1 keeps it off the public internet; the named volume survives redeploys.
 
 ### SQLite
 

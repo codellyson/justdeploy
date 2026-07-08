@@ -2,6 +2,7 @@
 // Runs as its own (systemd) process, as root, so it can drive deploys. Password-protected.
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, statSync, openSync, readSync, closeSync, appendFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname, normalize } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -10,6 +11,7 @@ import * as engine from './engine.js';
 import * as proc from './proc.js';
 import * as pg from './postgres.js';
 import * as auth from './auth.js';
+import * as github from './github.js';
 import { TABLE, TYPES, row } from './table.js';
 import { logFile } from './paths.js';
 
@@ -35,6 +37,12 @@ function kickDeploy(database, name, opts) {
   if (deploying.has(name)) return;
   deploying.add(name);
   engine.deploy(database, name, opts).catch(() => {}).finally(() => deploying.delete(name));
+}
+
+function kickRollback(database, name, sha) {
+  if (deploying.has(name)) return;
+  deploying.add(name);
+  engine.rollback(database, name, sha).catch(() => {}).finally(() => deploying.delete(name));
 }
 
 // --- process supervision ----------------------------------------------------
@@ -140,6 +148,8 @@ function appView(database, a) {
     repo: a.repo, live_port: a.live_port, live_pid: a.live_pid,
     release_cmd: a.release_cmd, persist: a.persist,
     rollbackTo: db.rollbackTarget(database, a.name),
+    releases: engine.listReleases(a.name),      // SHAs with a kept build → instant rollback
+    currentSha: engine.currentRelease(a.name),
     deploying: deploying.has(a.name),
     lastDeploy: last ? {
       status: last.status, sha: last.sha, at: last.finished_at || last.started_at,
@@ -190,6 +200,17 @@ function streamLog(req, res, name) {
   }, 800);
   const hb = setInterval(() => res.write(': hb\n\n'), 15000); // keep-alive comment
   req.on('close', () => { clearInterval(tick); clearInterval(hb); });
+}
+
+// SSE stream of a container's live logs (`docker logs -f`). Postgres writes to stderr.
+function streamDockerLogs(req, res, container) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  const sse = (text) => { for (const line of text.split('\n')) res.write(`data: ${line}\n`); res.write('\n'); };
+  const child = spawn('docker', ['logs', '-f', '--tail', '300', container]);
+  child.stdout.on('data', (d) => sse(d.toString()));
+  child.stderr.on('data', (d) => sse(d.toString()));
+  const hb = setInterval(() => res.write(': hb\n\n'), 15000);
+  req.on('close', () => { clearInterval(hb); child.kill('SIGKILL'); });
 }
 
 function serveStatic(res, urlPath) {
@@ -291,11 +312,55 @@ async function api(database, req, res, path) {
     });
   }
 
+  // --- GitHub source connection (Personal Access Token) ---
+  if (path === '/api/github' && req.method === 'GET') {
+    const token = db.getSetting(database, 'github_token');
+    if (!token) return send(res, 200, { connected: false });
+    try { const me = await github.whoami(token); return send(res, 200, { connected: true, login: me.login, avatar: me.avatar }); }
+    catch { return send(res, 200, { connected: false, error: 'token invalid or expired' }); }
+  }
+  if (path === '/api/github' && req.method === 'POST') {
+    const { token } = await body(req);
+    if (!token || !token.trim()) return send(res, 400, { error: 'token required' });
+    let me;
+    try { me = await github.whoami(token.trim()); } catch (e) { return send(res, 400, { error: e.message }); }
+    db.setSetting(database, 'github_token', token.trim());
+    db.setSetting(database, 'github_login', me.login);
+    return send(res, 200, { connected: true, login: me.login, avatar: me.avatar });
+  }
+  if (path === '/api/github' && req.method === 'DELETE') {
+    db.setSetting(database, 'github_token', '');
+    db.setSetting(database, 'github_login', '');
+    return send(res, 200, { ok: true });
+  }
+  if (path === '/api/github/repos' && req.method === 'GET') {
+    const token = db.getSetting(database, 'github_token');
+    if (!token) return send(res, 400, { error: 'not connected' });
+    try { return send(res, 200, { repos: await github.listRepos(token) }); }
+    catch (e) { return send(res, 502, { error: e.message }); }
+  }
+  if (path === '/api/github/detect' && req.method === 'GET') {
+    const token = db.getSetting(database, 'github_token');
+    const repo = new URL(req.url, 'http://x').searchParams.get('repo');
+    if (!token || !repo) return send(res, 400, { error: 'not connected or no repo' });
+    try { return send(res, 200, await github.detectType(token, repo)); }
+    catch { return send(res, 200, { type: null, reason: 'could not detect' }); }
+  }
+
   if (path === '/api/apps' && req.method === 'POST') {
     const { name, type, domain, repo, release, persist } = await body(req);
     if (!TYPES.includes(type)) return send(res, 400, { error: 'bad type' });
     if (!name || !/^[a-z0-9-]+$/.test(name)) return send(res, 400, { error: 'name must be [a-z0-9-]' });
     const serve = row(type).serve;
+
+    // Never let a new project silently overwrite an existing app or database.
+    if (db.getApp(database, name) || db.getResource(database, name)) {
+      return send(res, 409, { error: `“${name}” already exists — pick a different name` });
+    }
+    // Guard against two apps claiming the same domain (would collide in Caddy).
+    if (domain && db.listApps(database).some((a) => a.domain === domain)) {
+      return send(res, 409, { error: `domain ${domain} is already used by another app` });
+    }
 
     if (serve === 'resource') { // postgres
       const { conn } = pg.provision(database, name);
@@ -327,9 +392,10 @@ async function api(database, req, res, path) {
       return send(res, 200, { deploys: db.recentDeploys(database, name, 20) });
     }
     if (sub === 'rollback' && req.method === 'POST') {
-      const target = db.rollbackTarget(database, name);
+      const { sha } = await body(req);
+      const target = sha || db.rollbackTarget(database, name);
       if (!target) return send(res, 400, { error: 'no previous successful deploy' });
-      kickDeploy(database, name, { sha: target });
+      kickRollback(database, name, target); // instant if the release is kept, else rebuilds
       return send(res, 200, { ok: true, deploying: true, sha: target });
     }
 
@@ -365,11 +431,20 @@ async function api(database, req, res, path) {
     }
   }
 
-  // /api/resources/:name  (delete postgres)
-  const r = path.match(/^\/api\/resources\/([a-z0-9-]+)$/);
-  if (r && req.method === 'DELETE') {
-    pg.deprovision(database, r[1], {});
-    return send(res, 200, { ok: true });
+  // /api/resources/:name(/logs/stream|/restart|/reset-password)
+  const rm = path.match(/^\/api\/resources\/([a-z0-9-]+)(?:\/(logs\/stream|restart|reset-password))?$/);
+  if (rm) {
+    const rname = rm[1], rsub = rm[2];
+    if (!db.getResource(database, rname)) return send(res, 404, { error: 'no such resource' });
+    if (rsub === 'logs/stream' && req.method === 'GET') return streamDockerLogs(req, res, rname);
+    if (!rsub && req.method === 'GET') return send(res, 200, pg.info(database, rname));
+    if (!rsub && req.method === 'DELETE') { pg.deprovision(database, rname, {}); return send(res, 200, { ok: true }); }
+    if (rsub === 'restart' && req.method === 'POST') {
+      try { pg.restart(rname); return send(res, 200, { ok: true }); } catch (e) { return send(res, 500, { error: e.message }); }
+    }
+    if (rsub === 'reset-password' && req.method === 'POST') {
+      try { const { conn } = pg.resetPassword(database, rname); return send(res, 200, { ok: true, conn }); } catch (e) { return send(res, 500, { error: e.message }); }
+    }
   }
 
   return send(res, 404, { error: 'not found' });

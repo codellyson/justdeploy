@@ -49,6 +49,7 @@ export function open(file = STATE_DB) {
       name TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
       conn TEXT,
+      port INTEGER,
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS settings (
@@ -62,6 +63,7 @@ export function open(file = STATE_DB) {
     'ALTER TABLE apps ADD COLUMN persist TEXT',
     'ALTER TABLE deploys ADD COLUMN reason TEXT',
     'ALTER TABLE deploys ADD COLUMN hint TEXT',
+    'ALTER TABLE resources ADD COLUMN port INTEGER',
   ]) { try { db.exec(alter); } catch { /* column already exists */ } }
   return db;
 }
@@ -171,9 +173,18 @@ export const finishDeploy = (db, id, status, sha, message, at, reason = null, hi
   db.prepare('UPDATE deploys SET status=?, sha=?, message=?, reason=?, hint=?, finished_at=? WHERE id=?')
     .run(status, sha ?? null, message ?? null, reason, hint, at, id);
 
-export const addResource = (db, name, kind, conn, at) =>
-  db.prepare('INSERT INTO resources (name, kind, conn, created_at) VALUES (?, ?, ?, ?) ' +
-    'ON CONFLICT(name) DO UPDATE SET conn=excluded.conn').run(name, kind, conn, at);
+export const addResource = (db, name, kind, conn, port, at) =>
+  db.prepare('INSERT INTO resources (name, kind, conn, port, created_at) VALUES (?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(name) DO UPDATE SET conn=excluded.conn, port=excluded.port').run(name, kind, conn, port ?? null, at);
+
+// Lowest free Postgres host port at/above 5433 (skips ones already in use by a resource).
+export function allocatePgPort(db) {
+  const used = new Set();
+  for (const r of db.prepare('SELECT port FROM resources WHERE port IS NOT NULL').all()) used.add(r.port);
+  let p = 5433;
+  while (used.has(p)) p += 1;
+  return p;
+}
 
 export const getResource = (db, name) =>
   db.prepare('SELECT * FROM resources WHERE name=?').get(name);

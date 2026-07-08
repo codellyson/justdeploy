@@ -1,101 +1,170 @@
-// The deploy loop + the one stateful operation (zero-downtime port swap).
-// See docs/port-swap.md for the sequence and its failure matrix.
-import { existsSync, mkdirSync, rmSync, symlinkSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+// The deploy loop + zero-downtime port swap, on a release-based layout:
+//   /srv/<name>/repo             git working area
+//   /srv/<name>/releases/<sha>   a built copy of the app at that commit (has .jd-built marker)
+//   /srv/<name>/current -> releases/<sha>   symlink to the live release
+//   /srv/<name>/data             persists across releases (SQLite, uploads)
+// Deploy builds a new release and re-points `current`. Rollback to a kept release just
+// re-points `current` + restarts — no rebuild. See docs/port-swap.md for the swap sequence.
+import { existsSync, mkdirSync, rmSync, symlinkSync, readFileSync, writeFileSync, readlinkSync, readdirSync, statSync } from 'node:fs';
+import { join, basename } from 'node:path';
 import { row, autoEnv } from './table.js';
-import { repoDir, dataDir, SRV, logFile } from './paths.js';
+import { repoDir, dataDir, SRV, logFile, releasesDir, releaseDir, currentLink } from './paths.js';
 import * as db from './db.js';
 import * as caddy from './caddy.js';
 import * as proc from './proc.js';
+import * as github from './github.js';
 import { classify } from './diagnose.js';
 import { run, capture } from './sh.js';
 
 const now = () => new Date().toISOString();
+const KEEP_RELEASES = 5; // besides the current one
 
-// --- git ------------------------------------------------------------------
-// Always check out an explicit commit. Normal deploy → latest of the remote default branch
-// (origin/HEAD). Rollback → a specific past SHA. Uniform path, and it works from a detached
-// HEAD (which a prior rollback leaves behind) — no reliance on branch upstream (@{u}).
-async function sync(name, repo, targetSha) {
+// --- release bookkeeping ---------------------------------------------------
+function setCurrent(name, sha) {
+  const cur = currentLink(name);
+  rmSync(cur, { force: true }); // rm on a symlink removes the link, not the target
+  symlinkSync(releaseDir(name, sha), cur);
+}
+export function currentRelease(name) {
+  try { return basename(readlinkSync(currentLink(name))); } catch { return null; }
+}
+export function listReleases(name) {
+  const dir = releasesDir(name);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((sha) => existsSync(join(dir, sha, '.jd-built')));
+}
+function pruneReleases(name) {
+  const dir = releasesDir(name);
+  if (!existsSync(dir)) return;
+  const cur = currentRelease(name);
+  const rels = readdirSync(dir)
+    .map((sha) => ({ sha, mtime: statSync(join(dir, sha)).mtimeMs }))
+    .sort((a, b) => b.mtime - a.mtime);
+  let kept = 0;
+  for (const r of rels) {
+    if (r.sha === cur) continue;                       // never delete the live release
+    if (kept < KEEP_RELEASES) { kept += 1; continue; }
+    rmSync(join(dir, r.sha), { recursive: true, force: true });
+  }
+}
+
+// The dir an app runs from. With a sha → that release; otherwise the current release (falling
+// back to repo/ for apps not yet migrated to the release layout).
+function runDir(name, type, sha) {
+  const r = row(type);
+  const base = sha ? releaseDir(name, sha) : (existsSync(currentLink(name)) ? currentLink(name) : repoDir(name));
+  return r.cwd && r.cwd !== '.' ? join(base, r.cwd) : base;
+}
+
+// --- git -------------------------------------------------------------------
+// Fetch and resolve the commit to deploy (latest of origin/HEAD, or an explicit sha).
+async function fetchSha(name, repo, targetSha, authEnv) {
   const dir = repoDir(name);
   if (!existsSync(join(dir, '.git'))) {
     mkdirSync(dir, { recursive: true });
-    await run(name, process.cwd(), `git clone ${repo} ${dir}`);
+    await run(name, process.cwd(), `git clone ${repo} ${dir}`, authEnv);
   }
-  await run(name, dir, 'git fetch --all --prune && git remote set-head origin --auto');
-  const sha = targetSha || capture(dir, ['git', 'rev-parse', 'origin/HEAD']);
-  await run(name, dir, `git checkout --force ${sha}`);
-  return capture(dir, ['git', 'rev-parse', 'HEAD']);
+  await run(name, dir, 'git fetch --all --prune && git remote set-head origin --auto', authEnv);
+  return targetSha || capture(dir, ['git', 'rev-parse', 'origin/HEAD']);
 }
 
-// --- build ----------------------------------------------------------------
-async function build(name, type) {
+// --- build a release -------------------------------------------------------
+// Materialize a pristine tree at `sha` into releases/<sha> and build it. Idempotent: if the
+// release is already built (marker present), reuse it — this is what makes rollback instant.
+async function buildRelease(database, name, type, sha) {
+  const rel = releaseDir(name, sha);
+  const marker = join(rel, '.jd-built');
+  if (existsSync(marker)) return rel;
+  rmSync(rel, { recursive: true, force: true });
+  mkdirSync(rel, { recursive: true });
+  // Clean export of the commit (no .git); deps install fresh inside the release.
+  await run(name, repoDir(name), `git archive ${sha} | tar -x -C ${rel}`);
+
   const r = row(type);
-  const dir = repoDir(name);
-  if (r.build) await run(name, dir, r.build);
+  if (r.build) await run(name, rel, r.build);
   if (r.postBuild === 'next-standalone-copy') {
     // Standalone mode does not copy static assets or public/ — the classic broken-CSS trap.
-    await run(name, dir, 'cp -r .next/static .next/standalone/.next/static');
-    await run(name, dir, 'cp -r public .next/standalone/public 2>/dev/null || true');
+    await run(name, rel, 'cp -r .next/static .next/standalone/.next/static');
+    await run(name, rel, 'cp -r public .next/standalone/public 2>/dev/null || true');
   }
+  setupPersistence(name, type, sha, db.getApp(database, name).persist); // stable data dirs before migrations
+  await runRelease(database, name, type, sha);                           // migrations etc.
+  writeFileSync(marker, sha);
+  return rel;
 }
 
-// The dir an app builds/runs from: for adonis that's build/, otherwise the repo root.
-function runDir(name, type) {
-  const r = row(type);
-  return r.cwd && r.cwd !== '.' ? join(repoDir(name), r.cwd) : repoDir(name);
-}
-
-// Redirect runtime data dirs (e.g. `tmp` holding a SQLite file) to the persistent
-// /srv/<name>/data area, so they survive the build dir being replaced each deploy.
-// `persist` is a comma-separated list of paths relative to the run dir.
-function setupPersistence(name, type, persist) {
+// Redirect runtime data dirs (e.g. `tmp` holding a SQLite file) inside a release to the shared
+// /srv/<name>/data area, so data persists across releases. `persist` is a comma-separated list.
+function setupPersistence(name, type, sha, persist) {
   if (!persist) return;
-  const base = runDir(name, type);
+  const base = runDir(name, type, sha);
   for (const p of persist.split(',').map((s) => s.trim()).filter(Boolean)) {
-    const stable = join(dataDir(name), p);   // /srv/<name>/data/<p>  (survives)
-    const link = join(base, p);              // <rundir>/<p>          (replaced each deploy)
+    const stable = join(dataDir(name), p);
+    const link = join(base, p);
     mkdirSync(stable, { recursive: true });
     rmSync(link, { recursive: true, force: true });
     symlinkSync(stable, link);
   }
 }
 
-// Run the app's release command (e.g. `node ace migration:run`) after build, before the
+// Run the app's release command (e.g. `node ace migration:run`) inside the release, before the
 // server starts, with the app's env injected.
-async function runRelease(database, name, type) {
+async function runRelease(database, name, type, sha) {
   const app = db.getApp(database, name);
   if (!app.release_cmd) return;
   const env = { ...db.getEnv(database, name), ...autoEnv(type, app.live_port || 4000) };
-  await run(name, runDir(name, type), app.release_cmd, env);
+  await run(name, runDir(name, type, sha), app.release_cmd, env);
 }
 
 // --- the loop -------------------------------------------------------------
-// opts.sha (optional) pins the commit to deploy — used by rollback.
+// opts.sha (optional) pins the commit — used by rollback's rebuild fallback.
 export async function deploy(database, name, opts = {}) {
   const app = db.getApp(database, name);
   if (!app) throw new Error(`no such app: ${name}`);
+  if (!app.repo) throw new Error(`type ${app.type} is not deployable (no repository)`);
   const deployId = db.startDeploy(database, name, now());
   let sha = null;
   try {
-    if (app.repo) sha = await sync(name, app.repo, opts.sha);
-    await build(name, app.type);
-    setupPersistence(name, app.type, app.persist); // stable data dirs before migrations
-    await runRelease(database, name, app.type);    // migrations etc.
+    const authEnv = github.gitAuthEnv(db.getSetting(database, 'github_token'), app.repo);
+    sha = await fetchSha(name, app.repo, opts.sha, authEnv);
+    await buildRelease(database, name, app.type, sha);
 
     if (app.serve === 'static') {
-      // Nothing to swap — repoint Caddy at the (possibly rebuilt) folder.
-      await caddy.applyFromDb(database);
+      setCurrent(name, sha);
+      await caddy.applyFromDb(database); // Caddy root is current/<artifact>
     } else if (app.serve === 'proxy') {
-      await swap(database, app);
+      await swap(database, app, sha);
+      setCurrent(name, sha); // reflect the now-running release
     } else {
       throw new Error(`type ${app.type} is not deployable (it is a ${app.serve})`);
     }
-
+    pruneReleases(name);
     db.finishDeploy(database, deployId, 'success', sha, null, now());
     return { sha };
   } catch (e) {
-    // Diagnose: the thrown message plus the log tail (where the real crash shows up).
+    const { reason, hint } = classify(e.message, tailLog(name));
+    db.finishDeploy(database, deployId, 'failed', sha, e.message, now(), reason, hint);
+    const err = new Error(e.message);
+    err.reason = reason; err.hint = hint;
+    throw err;
+  }
+}
+
+// Roll back to a specific commit. If its release is still on disk → instant (re-point current
+// + restart, no rebuild). If it was pruned → rebuild that commit.
+export async function rollback(database, name, sha) {
+  const app = db.getApp(database, name);
+  if (!app) throw new Error(`no such app: ${name}`);
+  if (!existsSync(join(releaseDir(name, sha), '.jd-built'))) return deploy(database, name, { sha });
+
+  const deployId = db.startDeploy(database, name, now());
+  try {
+    if (app.serve === 'proxy') await swap(database, app, sha);
+    setCurrent(name, sha);
+    if (app.serve === 'static') await caddy.applyFromDb(database);
+    db.finishDeploy(database, deployId, 'success', sha, 'instant rollback', now());
+    return { sha, instant: true };
+  } catch (e) {
     const { reason, hint } = classify(e.message, tailLog(name));
     db.finishDeploy(database, deployId, 'failed', sha, e.message, now(), reason, hint);
     const err = new Error(e.message);
@@ -105,64 +174,55 @@ export async function deploy(database, name, opts = {}) {
 }
 
 function tailLog(name, lines = 60) {
-  try {
-    return readFileSync(logFile(name), 'utf8').split('\n').slice(-lines).join('\n');
-  } catch { return ''; }
+  try { return readFileSync(logFile(name), 'utf8').split('\n').slice(-lines).join('\n'); }
+  catch { return ''; }
 }
 
-// Zero-downtime swap for proxy types. Invariant: someone healthy always serves the domain.
-async function swap(database, app) {
+// Zero-downtime swap for proxy types, launching from release `sha`. Invariant: someone healthy
+// always serves the domain.
+async function swap(database, app, sha) {
   const r = row(app.type);
   const port = db.allocatePort(database);
   db.setPorts(database, app.name, { live: app.live_port, pending: port, pid: app.live_pid });
 
-  // Assemble launch env: inherited persisted env + the type's auto vars + PORT.
   const env = { ...db.getEnv(database, app.name), ...autoEnv(app.type, port) };
-  const cwd = r.cwd === '.' ? repoDir(app.name) : join(repoDir(app.name), r.cwd);
-
+  const cwd = runDir(app.name, app.type, sha);
   const newPid = proc.start(app.name, { cwd, argv: r.run, env });
 
-  const healthy = await proc.healthCheck(port, {
-    path: app.health_path,
-    timeout: app.health_timeout,
-  });
+  const healthy = await proc.healthCheck(port, { path: app.health_path, timeout: app.health_timeout });
   if (!healthy) {
-    await proc.drainAndKill(newPid, 0); // no drain — nothing is serving from it
+    await proc.drainAndKill(newPid, 0);
     db.setPorts(database, app.name, { live: app.live_port, pending: null, pid: app.live_pid });
     throw new Error(`health check failed on port ${port} — old version still serving`);
   }
 
-  // Cutover: point Caddy at the new port, then commit new state.
   db.setPorts(database, app.name, { live: port, pending: null, pid: newPid });
   try {
     await caddy.applyFromDb(database);
   } catch (e) {
-    // Caddy refused the swap — roll back state and kill the new process. Old still serves.
     db.setPorts(database, app.name, { live: app.live_port, pending: null, pid: app.live_pid });
     await proc.drainAndKill(newPid, 0);
     throw new Error(`caddy cutover failed, rolled back: ${e.message}`);
   }
 
-  // Drain and retire the old process (no-op on first deploy).
   if (app.live_pid && app.live_pid !== newPid) {
     await proc.drainAndKill(app.live_pid, app.drain_seconds);
   }
 }
 
 // Tear an app down: stop its process, drop it from Caddy, forget it, delete its files.
-// keepData preserves /srv/<name>/data (the persistent SQLite/uploads dir).
 export async function destroy(database, name, { keepData = false } = {}) {
   const app = db.getApp(database, name);
   if (!app) throw new Error(`no such app: ${name}`);
 
   if (app.serve === 'proxy' && app.live_pid) {
-    await proc.drainAndKill(app.live_pid, 0); // no traffic to drain — we're removing it
+    await proc.drainAndKill(app.live_pid, 0);
   }
   db.removeApp(database, name);
-  await caddy.applyFromDb(database); // repoint Caddy without this app
+  await caddy.applyFromDb(database);
 
   if (keepData) {
-    for (const sub of ['repo', 'logs']) {
+    for (const sub of ['repo', 'logs', 'releases', 'current']) {
       rmSync(join(SRV, name, sub), { recursive: true, force: true });
     }
   } else {
@@ -170,20 +230,16 @@ export async function destroy(database, name, { keepData = false } = {}) {
   }
 }
 
-// Relaunch a proxy app that died at runtime, on its existing live_port. No rebuild, no
-// Caddy change (Caddy already points at that port), no release step (migrations already
-// ran) — just start the process again and health-check it. Used by the supervisor and by
-// crash recovery after a reboot. Returns true if it's back up.
+// Relaunch a proxy app that died at runtime, on its existing live_port, from the current
+// release — no rebuild. Used by the supervisor and by crash recovery after a reboot.
 export async function restart(database, name) {
   const app = db.getApp(database, name);
   if (!app || app.serve !== 'proxy' || !app.live_port) return false;
   const r = row(app.type);
   const env = { ...db.getEnv(database, name), ...autoEnv(app.type, app.live_port) };
-  const cwd = r.cwd === '.' ? repoDir(name) : join(repoDir(name), r.cwd);
+  const cwd = runDir(name, app.type); // current release (or repo/ pre-migration)
   const pid = proc.start(name, { cwd, argv: r.run, env });
-  const healthy = await proc.healthCheck(app.live_port, {
-    path: app.health_path, timeout: app.health_timeout,
-  });
+  const healthy = await proc.healthCheck(app.live_port, { path: app.health_path, timeout: app.health_timeout });
   if (!healthy) { await proc.drainAndKill(pid, 0); return false; }
   db.setPorts(database, name, { live: app.live_port, pending: null, pid });
   return true;

@@ -2,10 +2,10 @@
 // only source) and POST it to /load as text/caddyfile — Caddy adapts + applies it with a
 // graceful (zero-downtime) reload, so in-flight requests on the old upstream drain naturally.
 // No config file on disk, no SIGHUP.
-import { CADDY_ADMIN } from './paths.js';
-import { repoDir } from './paths.js';
+import { CADDY_ADMIN, repoDir, currentLink } from './paths.js';
 import { row } from './table.js';
 import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import * as db from './db.js';
 
 // Build the global Caddyfile from every app the tool knows about.
@@ -19,7 +19,10 @@ export function generate(apps, dashboard) {
   for (const a of apps) {
     if (a.serve === 'static' && a.domain) {
       const artifact = row(a.type).artifact;
-      const root = artifact === '.' ? repoDir(a.name) : join(repoDir(a.name), artifact);
+      // Serve the current release (rollback = re-symlink `current`, no reload). Fall back to
+      // repo/ for apps not yet migrated to the release layout.
+      const base = existsSync(currentLink(a.name)) ? currentLink(a.name) : repoDir(a.name);
+      const root = artifact === '.' ? base : join(base, artifact);
       blocks.push(
         `${a.domain} {\n` +
         `\troot * ${root}\n` +

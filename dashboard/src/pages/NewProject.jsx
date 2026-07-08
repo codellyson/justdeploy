@@ -4,6 +4,7 @@ import { api } from '../api';
 import { invalidate } from '../lib/store';
 import { toast } from '../components/toast';
 import { TypeIcon, Icon } from '../components/icons';
+import { GithubSource } from '../components/GithubSource';
 import { cx, typeLabel, slug, suggestName, nameFromRepo } from '../lib/format';
 
 const TYPES = ['react', 'vite', 'static', 'adonis', 'nextjs', 'postgres', 'sqlite'];
@@ -22,6 +23,7 @@ export function NewProject() {
   const [f, setF] = useState({});
   const [touched, setTouched] = useState({ name: false, domain: false });
   const [baseDomain, setBaseDomain] = useState('');
+  const [detected, setDetected] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
@@ -39,13 +41,16 @@ export function NewProject() {
 
   const onName = (e) => { setTouched((t) => ({ ...t, name: true })); setF((s) => ({ ...s, name: e.target.value })); };
   const onDomain = (e) => { setTouched((t) => ({ ...t, domain: true })); setF((s) => ({ ...s, domain: e.target.value })); };
-  const onRepo = (e) => {
-    const repo = e.target.value;
-    setF((s) => {
-      const next = { ...s, repo };
-      if (!touched.name) { const n = nameFromRepo(repo); if (n) next.name = n; }
-      return next;
-    });
+  const setRepo = (repo) => setF((s) => {
+    const next = { ...s, repo };
+    if (!touched.name) { const n = nameFromRepo(repo); if (n) next.name = n; }
+    return next;
+  });
+  // On picking a repo, detect its framework and match the right type to it.
+  const onPickRepo = async (repo) => {
+    setDetected(null);
+    try { const d = await api.githubDetect(repo.full_name); if (d.type) { setType(d.type); setDetected(d); } }
+    catch { /* leave the current type */ }
   };
 
   const submit = async () => {
@@ -78,13 +83,18 @@ export function NewProject() {
       <div className="mb-3 flex items-center gap-2"><StepDot n={1} active /><span className="text-sm font-semibold">Pick the app type</span></div>
       <div className="mb-8 grid grid-cols-3 gap-2.5 sm:grid-cols-4 lg:grid-cols-6">
         {TYPES.map((t) => (
-          <button key={t} onClick={() => { setType(t); setErr(''); }} className={cx('relative flex flex-col items-center gap-2 rounded-2xl border px-2 py-4 transition', type === t ? 'border-accent bg-accent/[0.1] text-primary' : 'border-border bg-bg-secondary text-secondary hover:border-accent/50')}>
+          <button key={t} onClick={() => { setType(t); setDetected(null); setErr(''); }} className={cx('relative flex flex-col items-center gap-2 rounded-2xl border px-2 py-4 transition', type === t ? 'border-accent bg-accent/[0.1] text-primary' : 'border-border bg-bg-secondary text-secondary hover:border-accent/50')}>
             <span className="grid h-10 w-10 place-items-center rounded-xl bg-bg"><TypeIcon type={t} className="h-5 w-5" /></span>
             <span className="text-xs font-medium">{typeLabel(t)}</span>
             {type === t && <Icon.Check className="absolute right-2 top-2 h-3.5 w-3.5 text-accent" />}
           </button>
         ))}
       </div>
+      {detected?.type && (
+        <div className="-mt-6 mb-8 flex items-center gap-1.5 text-xs text-accent">
+          <Icon.Check className="h-3.5 w-3.5" /> Auto-detected <b className="font-semibold">{typeLabel(detected.type)}</b> from your repo — {detected.reason}
+        </div>
+      )}
 
       {/* step 2 */}
       <div className={cx('transition-opacity duration-300', type ? 'opacity-100' : 'pointer-events-none opacity-40')}>
@@ -95,19 +105,11 @@ export function NewProject() {
               <label className="label-tiny">Project name</label>
               <input value={f.name || ''} onChange={onName} placeholder="my-new-app" className="field" />
             </div>
-            {needsRepoDomain(type) && (
-              <div className="flex flex-1 basis-52 flex-col gap-1.5">
-                <label className="label-tiny">Repository</label>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"><Icon.GitBranch className="h-4 w-4" /></span>
-                  <input value={f.repo || ''} onChange={onRepo} placeholder="github.com/you/repo" className="field pl-9 font-mono text-[0.8rem]" />
-                </div>
-              </div>
-            )}
           </div>
 
           {needsRepoDomain(type) && (
             <>
+              <GithubSource value={f.repo || ''} onRepo={setRepo} onPick={onPickRepo} />
               <div className="flex flex-col gap-1.5">
                 <label className="label-tiny">Domain <span className="font-normal normal-case tracking-normal text-muted/70">— auto-generated, edit if you like</span></label>
                 <input value={f.domain || ''} onChange={onDomain} placeholder="app.example.com" className="field font-mono text-[0.8rem]" />

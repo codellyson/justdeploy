@@ -52,6 +52,7 @@ export function AppDetail() {
   };
   const deploy = () => act('deploy', () => api.deploy(name), 'Logs').then(() => toast(`deploying ${name}`));
   const rollback = () => { if (confirm(`Roll back to ${shortSha(app.rollbackTo)}?`)) act('rollback', () => api.rollback(name), 'Logs'); };
+  const rollbackSha = (sha) => { if (confirm(`Roll back to ${shortSha(sha)}?`)) act('rollback', () => api.rollback(name, sha), 'Logs'); };
   const remove = () => { if (confirm(`Delete ${name}? Removes files and stops it.`)) act('delete', async () => { await api.remove(name); navigate('/'); toast(`${name} removed`); }); };
 
   return (
@@ -110,7 +111,7 @@ export function AppDetail() {
         {tab === 'Overview' && <OverviewTab app={app} onLogs={() => setTab('Logs')} onDeploys={() => setTab('Deploys')} />}
         {tab === 'Logs' && <LogsTab name={name} />}
         {tab === 'Environment' && <EnvTab name={name} />}
-        {tab === 'Deploys' && <DeploysTab name={name} rollbackTo={app.rollbackTo} onRollback={rollback} />}
+        {tab === 'Deploys' && <DeploysTab name={name} app={app} onRollback={rollbackSha} />}
         {tab === 'Config' && <ConfigTab app={app} onDelete={remove} />}
       </div>
     </div>
@@ -283,20 +284,29 @@ function EnvTab({ name }) {
   );
 }
 
-function DeploysTab({ name, rollbackTo, onRollback }) {
+function DeploysTab({ name, app, onRollback }) {
   const v = useVersion();
   const [items, setItems] = useState(null);
   useEffect(() => { fetch(`/api/apps/${name}/deploys`).then((r) => r.json()).then((d) => setItems(d.deploys || [])).catch(() => setItems([])); }, [name, v]);
   if (!items) return <Spinner className="mx-auto my-10 h-5 w-5" />;
   if (items.length === 0) return <p className="py-10 text-center text-sm text-muted">No deploys yet.</p>;
-  const currentId = items.find((d) => d.status === 'success')?.id;
+
+  const kept = new Set(app.releases || []);
+  const currentId = (app.currentSha
+    ? items.find((d) => d.status === 'success' && d.sha === app.currentSha)
+    : items.find((d) => d.status === 'success'))?.id;
+
   return (
     <div className="max-w-4xl">
-      <h3 className="mb-3.5 text-base font-semibold">Deployments</h3>
+      <h3 className="mb-1 text-base font-semibold">Deployments</h3>
+      <p className="mb-3.5 text-sm text-muted">Roll back to any kept build instantly — no rebuild.</p>
       <div className="surface divide-y divide-border overflow-hidden p-0">
         {items.map((d) => {
           const st = d.status === 'success' ? 'success' : d.status === 'failed' ? 'danger' : 'accent';
           const dur = duration(d);
+          const isCurrent = d.id === currentId;
+          const canRollback = d.status === 'success' && d.sha && !isCurrent;
+          const instant = d.sha && kept.has(d.sha);
           return (
             <div key={d.id} className="flex flex-wrap items-center gap-3 px-4 py-3 transition hover:surface-2">
               <span className={cx('h-2.5 w-2.5 shrink-0 rounded-full', tone(st).dot)} />
@@ -304,19 +314,19 @@ function DeploysTab({ name, rollbackTo, onRollback }) {
                 <div className="truncate text-sm font-medium">{d.reason || d.message || (d.status === 'success' ? 'Deployment' : d.status)}</div>
                 <div className="mt-0.5 flex items-center gap-1.5 font-mono text-xs text-muted"><Icon.GitCommit className="h-3 w-3" />{shortSha(d.sha) || '—'}</div>
               </div>
-              <span className={cx('shrink-0 text-xs font-medium', tone(st).text)}>{d.status}</span>
-              {dur && <span className="flex shrink-0 items-center gap-1 font-mono text-xs text-muted"><Icon.Clock className="h-3 w-3" />{dur}</span>}
+              {dur && <span className="hidden shrink-0 items-center gap-1 font-mono text-xs text-muted sm:flex"><Icon.Clock className="h-3 w-3" />{dur}</span>}
               <span className="shrink-0 text-xs text-muted">{timeAgo(d.finished_at || d.started_at)}</span>
-              {d.id === currentId && <span className="shrink-0 rounded-md bg-success/[0.14] px-2 py-0.5 text-[0.7rem] font-semibold text-success">Current</span>}
+              {isCurrent
+                ? <span className="shrink-0 rounded-md bg-success/[0.14] px-2 py-0.5 text-[0.7rem] font-semibold text-success">Current</span>
+                : canRollback && (
+                  <button onClick={() => onRollback(d.sha)} title={instant ? 'Instant — this build is kept on disk' : 'The build was pruned; this will rebuild the commit'} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-bg-secondary px-2.5 py-1 text-xs font-medium transition hover:border-accent hover:text-accent">
+                    <Icon.Rollback className="h-3.5 w-3.5" /> Rollback
+                    <span className={cx('rounded px-1 py-0.5 text-[0.6rem] font-semibold', instant ? 'bg-accent/[0.14] text-accent' : 'surface-2 text-muted')}>{instant ? 'instant' : 'rebuild'}</span>
+                  </button>
+                )}
             </div>
           );
         })}
-        {rollbackTo && (
-          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-            <span className="text-sm text-muted">Roll back to the previous good commit <Mono className="text-primary">{shortSha(rollbackTo)}</Mono></span>
-            <button onClick={onRollback} className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-secondary px-3 py-1.5 text-xs font-medium transition hover:border-muted/50"><Icon.Rollback className="h-3.5 w-3.5" /> Rollback</button>
-          </div>
-        )}
       </div>
     </div>
   );

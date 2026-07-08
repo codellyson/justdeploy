@@ -8,15 +8,20 @@
 //   run:     for proxy, argv to spawn (via node)
 //   postBuild: named fixup run after build (see engine.js)
 
+// Lockfile-aware installs: `npm ci` is fast + deterministic but REQUIRES a lockfile; many
+// repos don't commit one, so fall back to `npm install` (which also generates a lockfile).
+const NPM = 'if [ -f package-lock.json ]; then npm ci; else npm install; fi';
+const NPM_PROD = 'if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi';
+
 export const TABLE = {
   react: {
     serve: 'static',
-    build: 'npm ci && npm run build',
+    build: `${NPM} && npm run build`,
     artifact: 'build',
   },
   vite: {
     serve: 'static',
-    build: 'npm ci && npm run build',
+    build: `${NPM} && npm run build`,
     artifact: 'dist',
   },
   static: {
@@ -26,16 +31,15 @@ export const TABLE = {
   },
   adonis: {
     serve: 'proxy',
-    // `node ace build` copies package.json into build/ but NOT package-lock.json, so a bare
-    // `npm ci` in build/ fails ("no lockfile"). Copy the lockfile in first to keep a
-    // deterministic install.
-    build: 'npm ci && node ace build && cp package-lock.json build/ && cd build && npm ci --omit=dev',
+    // `node ace build` copies package.json into build/ but NOT the lockfile; copy it in (if any)
+    // so the build-dir install stays deterministic, then install production deps there.
+    build: `${NPM} && node ace build && ([ -f package-lock.json ] && cp package-lock.json build/ || true) && cd build && ${NPM_PROD}`,
     cwd: 'build',
     run: ['node', 'bin/server.js'],
   },
   nextjs: {
     serve: 'proxy',
-    build: 'npm ci && npm run build',
+    build: `${NPM} && npm run build`,
     postBuild: 'next-standalone-copy',
     cwd: '.',
     run: ['node', '.next/standalone/server.js'],

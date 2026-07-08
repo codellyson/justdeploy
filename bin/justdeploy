@@ -28,6 +28,7 @@ import * as pg from '../src/postgres.js';
 import * as auth from '../src/auth.js';
 import * as backup from '../src/backup.js';
 import * as s3 from '../src/s3.js';
+import * as github from '../src/github.js';
 import { row, TYPES } from '../src/table.js';
 import { logFile } from '../src/paths.js';
 import * as config from '../src/config.js';
@@ -58,6 +59,7 @@ async function cmdAdd(a) {
   if (serve !== 'resource' && serve !== 'file' && !a.domain) die('--domain is required');
 
   const database = db.open();
+  if (db.getApp(database, name) || db.getResource(database, name)) die(`"${name}" already exists — rm it first, or pick another name`);
   // Validate the shape; the record lives in the state db (source of truth), not a yml file.
   config.validate({ name, type: a.type, domain: a.domain, repo, release: a.release, persist: a.persist });
   db.upsertApp(database, {
@@ -169,15 +171,15 @@ async function cmdRm(a) {
 
 async function cmdRollback(a) {
   const name = a._[0];
-  if (!name) die('usage: justdeploy rollback <name>');
+  if (!name) die('usage: justdeploy rollback <name> [<sha>]');
   const database = db.open();
   if (!db.getApp(database, name)) die(`no such app: ${name}`);
-  const target = db.rollbackTarget(database, name);
+  const target = a._[1] || db.rollbackTarget(database, name);
   if (!target) die('no previous successful deploy to roll back to');
   process.stdout.write(`rolling back ${name} to ${target.slice(0, 7)} ... `);
   try {
-    await engine.deploy(database, name, { sha: target });
-    console.log('ok');
+    const r = await engine.rollback(database, name, target);
+    console.log(r.instant ? 'ok (instant — kept release)' : 'ok (rebuilt)');
   } catch (e) {
     console.log('FAILED');
     if (e.reason) { console.error(`\nwhy: ${e.reason}`); if (e.hint) console.error(`fix: ${e.hint.replaceAll('<app>', name)}`); }
@@ -197,6 +199,26 @@ function cmdSet(a) {
   if (!Object.keys(f).length) die('nothing to set — pass --release, --persist, or --health-path');
   db.updateAppConfig(database, name, f);
   console.log(`updated ${name} — redeploy to apply`);
+}
+
+async function cmdGithub(a) {
+  const database = db.open();
+  if ('clear' in a) {
+    db.setSetting(database, 'github_token', ''); db.setSetting(database, 'github_login', '');
+    console.log('GitHub disconnected'); return;
+  }
+  const token = a._[0];
+  if (!token) {
+    const connected = db.getSetting(database, 'github_token');
+    console.log(connected ? `connected as ${db.getSetting(database, 'github_login') || '?'}` : 'not connected — run: justdeploy github <token>  (create one at github.com/settings/tokens with repo scope)');
+    return;
+  }
+  try {
+    const me = await github.whoami(token);
+    db.setSetting(database, 'github_token', token);
+    db.setSetting(database, 'github_login', me.login);
+    console.log(`connected as ${me.login} — private repos will now clone`);
+  } catch (e) { die(e.message); }
 }
 
 function cmdWebhook(a) {
@@ -386,12 +408,13 @@ try {
     case 'rollback': await cmdRollback(a); break;
     case 'set': cmdSet(a); break;
     case 'webhook': cmdWebhook(a); break;
+    case 'github': await cmdGithub(a); break;
     case 'backup': cmdBackup(a); break;
     case 'restore': await cmdRestore(a); break;
     case 'dashboard': await cmdDashboard(a); break;
     case 'reconcile': await cmdReconcile(); break;
     default:
-      console.log('usage: justdeploy <add|deploy|ls|logs|env|pg|rm|rollback|set|webhook|backup|restore|dashboard|reconcile>');
+      console.log('usage: justdeploy <add|deploy|ls|logs|env|pg|rm|rollback|set|webhook|github|backup|restore|dashboard|reconcile>');
       process.exit(cmd ? 1 : 0);
   }
 } catch (e) {

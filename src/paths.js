@@ -8,9 +8,15 @@ export const STATE_DB = join(HOME, 'state.db');
 // Where apps live. Each app gets /srv/<name>/{repo,data,logs}.
 export const SRV = process.env.JUSTDEPLOY_SRV || '/srv';
 
-export const repoDir = (name) => join(SRV, name, 'repo');
-export const dataDir = (name) => join(SRV, name, 'data'); // persists across deploys (SQLite dbs, uploads)
+export const repoDir = (name) => join(SRV, name, 'repo');   // git working area
+export const dataDir = (name) => join(SRV, name, 'data');   // persists across deploys (SQLite dbs, uploads)
 export const logFile = (name) => join(SRV, name, 'logs', 'app.log');
+
+// Release-based deploys: each deploy builds into releases/<sha>; `current` symlinks the live
+// one. Rollback re-points `current` to a kept release — no rebuild.
+export const releasesDir = (name) => join(SRV, name, 'releases');
+export const releaseDir = (name, sha) => join(SRV, name, 'releases', sha);
+export const currentLink = (name) => join(SRV, name, 'current');
 
 // Caddy admin API — driven live, no config file on disk, no SIGHUP.
 export const CADDY_ADMIN = process.env.CADDY_ADMIN || 'http://localhost:2019';

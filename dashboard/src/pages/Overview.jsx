@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { api } from '../api';
-import { useVersion, invalidate } from '../lib/store';
+import { useVersion } from '../lib/store';
 import { toast } from '../components/toast';
 import { StatusDot, SoftIcon, Avatar, Mono, Spinner, tone, STATUS_META } from '../components/ui';
 import { Icon } from '../components/icons';
@@ -191,23 +191,16 @@ export function Overview() {
 }
 
 function DbRow({ r }) {
-  const copy = () => { navigator.clipboard?.writeText(r.conn || ''); toast('connection string copied', 'success'); };
-  const del = async () => {
-    if (!confirm(`Delete database ${r.name} and its data volume? This cannot be undone.`)) return;
-    try { await api.removeResource(r.name); invalidate(); toast(`${r.name} removed`); }
-    catch (e) { toast(e.message, 'error'); }
-  };
+  const copy = (e) => { e.preventDefault(); navigator.clipboard?.writeText(r.conn || ''); toast('connection string copied', 'success'); };
   return (
-    <div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
+    <Link to={`/db/${r.name}`} className="flex flex-wrap items-center gap-3 px-4 py-3.5 transition hover:surface-2">
       <SoftIcon icon={Icon.Database} tone="accent" />
       <div className="min-w-0 flex-1">
         <div className="font-medium">{r.name}</div>
         <Mono className="block truncate text-muted">{(r.conn || '').replace(/:[^:@/]+@/, ':••••@')}</Mono>
       </div>
-      <div className="flex items-center gap-2">
-        <button onClick={copy} className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-secondary transition hover:border-accent hover:text-primary"><Icon.Copy className="h-3.5 w-3.5" /> Copy URL</button>
-        <button onClick={del} className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-danger transition hover:border-danger"><Icon.Trash className="h-3.5 w-3.5" /> Delete</button>
-      </div>
-    </div>
+      <button onClick={copy} className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-secondary transition hover:border-accent hover:text-primary"><Icon.Copy className="h-3.5 w-3.5" /> Copy URL</button>
+      <Icon.ChevronRight className="h-4 w-4 text-muted" />
+    </Link>
   );
 }
