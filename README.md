@@ -86,6 +86,17 @@ Postgres) on Debian/Ubuntu; pass `--no-docker` to skip Docker. State lives in
 `/var/lib/justdeploy/state.db`; apps live under `/srv/<name>/`. Override with
 `JUSTDEPLOY_HOME` and `JUSTDEPLOY_SRV`.
 
+To reverse it, `justdeploy uninstall` removes the management layer (dashboard service, backup
+timer, CLI) but **keeps your apps serving and all data**. Add `--purge` to also tear down every
+app + database and wipe state/data/checkout, and `--remove-deps` to also apt-purge Caddy. It's
+destructive, so it requires `--yes`:
+
+```
+justdeploy uninstall --yes                      # remove the tool, keep apps + data
+justdeploy uninstall --purge --yes              # nuke everything JustDeploy created
+justdeploy uninstall --purge --remove-deps --yes # + remove Caddy from the box
+```
+
 ## Use
 
 ```

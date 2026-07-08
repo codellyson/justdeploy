@@ -4,7 +4,7 @@
 // and only does work that's missing, so `setup` is safe to re-run. On anything that isn't
 // apt-based it prints the manual steps and bails rather than guessing.
 import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { CADDY_ADMIN } from './paths.js';
 
 const CADDY_KEYRING = '/usr/share/keyrings/caddy-stable-archive-keyring.gpg';
@@ -97,6 +97,41 @@ export function printReport(s) {
   console.log(`  ${mark(s.caddyAdmin)} Caddy admin API (${CADDY_ADMIN})`);
   console.log(`  ${mark(s.docker)} Docker ${s.docker ? '' : '(optional — needed only for Postgres)'}`);
   console.log('');
+}
+
+// --- uninstall helpers ---------------------------------------------------
+// System-level teardown. The app/database teardown (which needs the engine) stays in the CLI;
+// these cover the pieces `setup` itself put on the box: systemd units, the CLI link, the
+// Caddy package, and on-disk directories.
+export function removeUnit(unit) {
+  // `unit` includes its suffix, e.g. 'justdeploy-dashboard.service' or 'justdeploy-backup.timer'.
+  try { execSync(`systemctl disable --now ${unit}`, { stdio: 'ignore' }); } catch { /* not present */ }
+  const path = `/etc/systemd/system/${unit}`;
+  if (existsSync(path)) { try { rmSync(path); } catch { /* ignore */ } }
+}
+
+export function daemonReload() { try { execSync('systemctl daemon-reload', { stdio: 'ignore' }); } catch { /* ignore */ } }
+
+export function removeCli() {
+  step('removing the justdeploy CLI…');
+  try { execSync('npm rm -g justdeploy', { stdio: 'ignore' }); } catch { /* not npm-linked */ }
+  for (const p of ['/usr/local/bin/justdeploy', '/usr/bin/justdeploy']) {
+    if (existsSync(p)) { try { rmSync(p); } catch { /* ignore */ } }
+  }
+}
+
+export function removeCaddyPackage() {
+  if (!platform().isApt) { console.log('  (skip) not an apt system — remove Caddy manually if you want it gone.'); return; }
+  step('purging Caddy from the system…');
+  try { execSync('systemctl disable --now caddy', { stdio: 'ignore' }); } catch { /* ignore */ }
+  try { execSync('apt-get purge -y caddy', { stdio: 'inherit' }); } catch { /* ignore */ }
+  for (const f of [CADDY_LIST, CADDY_KEYRING]) if (existsSync(f)) { try { rmSync(f); } catch { /* ignore */ } }
+}
+
+export function removePath(p) {
+  if (!existsSync(p)) return;
+  try { rmSync(p, { recursive: true, force: true }); }
+  catch (e) { console.log(`  could not remove ${p}: ${e.message}`); }
 }
 
 // --- orchestration -------------------------------------------------------

@@ -247,6 +247,7 @@
       <li><a href="#step-backup">Backups</a></li>
       <li><a href="#step-verify">Verify</a></li>
       <li><a href="#troubleshooting">Troubleshoot</a></li>
+      <li><a href="#step-uninstall">Uninstall</a></li>
     </ol>
   </aside>
 
@@ -510,6 +511,29 @@
           <tr><td>Deploy fails</td><td>The failure prints a plain-English reason <em>and</em> the fix — read it in <code>justdeploy logs &lt;app&gt;</code> or the dashboard's deploy log.</td></tr>
         </tbody>
       </table></div>
+    </section>
+
+    <!-- uninstall -->
+    <section class="step reveal" id="step-uninstall">
+      <div class="step-head"><span class="step-num opt">⌫</span><h2>Uninstall</h2></div>
+      <p>Reverses <code>setup</code>. By default it removes the <strong>management layer</strong> — the
+      dashboard service, the backup timer, and the CLI — but <strong>leaves your apps serving and all data
+      intact</strong>, so you can reinstall and pick up where you left off. It's destructive, so it needs
+      <code>--yes</code>.</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">uninstall</span><button class="copy">copy</button></div>
+<pre><code><span class="cmd">justdeploy</span> uninstall <span class="arg">--yes</span>                       <span class="cmt"># remove the tool, keep apps + data</span>
+<span class="cmd">justdeploy</span> uninstall <span class="arg">--purge --yes</span>               <span class="cmt"># tear down every app + db, wipe state/data/checkout</span>
+<span class="cmd">justdeploy</span> uninstall <span class="arg">--purge --remove-deps --yes</span>  <span class="cmt"># + apt-purge Caddy (Docker is left alone)</span></code></pre>
+      </div>
+      <p>Run it with no flags first — it prints exactly what each option will do and refuses until you add
+      <code>--yes</code>, so you always see the plan before anything happens. <code>--purge</code> reuses the
+      same teardown as <code>justdeploy rm</code> (stops processes, removes containers + volumes, drops Caddy
+      routes) for every app and database, then deletes state and the checkout.</p>
+      <div class="note warn"><span class="ico">!</span>
+        <p><code>--purge</code> is irreversible and takes your databases with it. If there's anything you
+        might want back, run <code>justdeploy backup</code> first.</p>
+      </div>
     </section>
 
     <!-- one-shot -->
