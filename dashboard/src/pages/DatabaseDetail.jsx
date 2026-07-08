@@ -161,11 +161,14 @@ export function DatabaseDetail() {
               </div>
             </div>
             {r.public && (
-              <div className="flex items-center gap-2 border-t border-warning/20 pt-3 text-xs">
-                {r.allowIps?.length
-                  ? <><Icon.Lock className="h-3.5 w-3.5 text-success" /><span className="text-secondary">Restricted to</span> <Mono className="text-primary">{r.allowIps.join(', ')}</Mono></>
-                  : <><Icon.Alert className="h-3.5 w-3.5 text-danger" /><span className="text-danger">Open to the entire internet — no IP allowlist. Anyone can attempt to connect.</span></>}
-              </div>
+              <>
+                <div className="flex items-center gap-2 border-t border-warning/20 pt-3 text-xs">
+                  {r.allowIps?.length
+                    ? <><Icon.Lock className="h-3.5 w-3.5 text-success" /><span className="text-secondary">Restricted to</span> <Mono className="text-primary">{r.allowIps.join(', ')}</Mono></>
+                    : <><Icon.Alert className="h-3.5 w-3.5 text-danger" /><span className="text-danger">Open to the entire internet — no IP allowlist. Anyone can attempt to connect.</span></>}
+                </div>
+                <HostnameRow current={r.publicHost} />
+              </>
             )}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-danger/30 bg-danger/[0.08] p-5">
@@ -176,6 +179,25 @@ export function DatabaseDetail() {
       )}
 
       {exposing && <ExposeModal name={name} current={r.allowIps} busy={busy === 'expose'} onCancel={() => setExposing(false)} onApply={applyExpose} />}
+    </div>
+  );
+}
+
+function HostnameRow({ current }) {
+  const [host, setHost] = useState(current || '');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setHost(current || ''); }, [current]);
+  const save = async () => {
+    setSaving(true);
+    try { await api.setDbHost(host.trim()); invalidate(); toast('public hostname updated', 'success'); }
+    catch (e) { toast(e.message, 'error'); } finally { setSaving(false); }
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t border-warning/20 pt-3">
+      <span className="label-tiny">Public hostname</span>
+      <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="db.example.com" className="field flex-1 py-1.5 font-mono text-xs" />
+      <button onClick={save} disabled={saving || host.trim() === (current || '')} className="rounded-lg border border-border bg-bg-secondary px-2.5 py-1.5 text-xs font-medium transition hover:border-muted/50 disabled:opacity-50">{saving ? 'Saving…' : 'Save'}</button>
+      <span className="w-full text-[0.7rem] text-muted">Used in the external URL. Must be a DNS-only A record pointing at this server (not proxied). Leave blank to use the IP.</span>
     </div>
   );
 }

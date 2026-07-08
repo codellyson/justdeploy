@@ -313,6 +313,12 @@ async function api(database, req, res, path) {
     return send(res, 200, { ip: clientIp(req) });
   }
 
+  if (path === '/api/settings/public-host' && req.method === 'PUT') {
+    const { host } = await body(req);
+    db.setSetting(database, 'public_host', (host || '').trim()); // empty → falls back to the domain
+    return send(res, 200, { ok: true });
+  }
+
   if (path === '/api/state' && req.method === 'GET') {
     return send(res, 200, {
       apps: db.listApps(database).map((a) => appView(database, a)),

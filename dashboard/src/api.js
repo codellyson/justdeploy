@@ -29,6 +29,7 @@ export const api = {
   resetResourcePassword: (name) => req(`/resources/${name}/reset-password`, { method: 'POST' }),
   exposeResource: (name, isPublic, allowIps = []) => req(`/resources/${name}/expose`, { method: 'POST', body: { public: isPublic, allowIps } }),
   myIp: () => req('/myip'),
+  setDbHost: (host) => req('/settings/public-host', { method: 'PUT', body: { host } }),
   resourceLogStream: (name) => new EventSource(`/api/resources/${name}/logs/stream`),
 
   // GitHub source connection

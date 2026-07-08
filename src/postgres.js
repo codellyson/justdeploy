@@ -124,16 +124,17 @@ export function ensureRole(database, name) {
 
 const CONN_RE = /^postgres:\/\/([^:]+):([^@]+)@([^:/]+):(\d+)\/([^?]+)/; // dbName stops before ?query
 
-// The host to hand out for public connection strings — a configured `public_host` (e.g. a
-// domain you point at the box) or the detected public IPv4.
+// The host to hand out for public connection strings. Prefer a hostname that already points at
+// the box (nicer, and survives an IP change): an explicit `public_host`, else the base/dashboard
+// domain, else the detected public IPv4. A DB hostname must be a DNS-only A record → this box
+// (not proxied), since Postgres is a raw TCP port, not HTTP.
 function publicHost(database) {
-  let h = db.getSetting(database, 'public_host');
-  if (!h) {
-    const r = spawnSync('sh', ['-c', 'curl -s --max-time 4 https://api.ipify.org || hostname -I | awk "{print $1}"'], { encoding: 'utf8' });
-    h = (r.stdout || '').trim();
-    if (h) db.setSetting(database, 'public_host', h);
-  }
-  return h || '127.0.0.1';
+  const explicit = db.getSetting(database, 'public_host');
+  if (explicit) return explicit;
+  const domain = db.getSetting(database, 'base_domain') || db.getSetting(database, 'dashboard_domain');
+  if (domain) return domain;
+  const r = spawnSync('sh', ['-c', 'curl -s --max-time 4 https://api.ipify.org || hostname -I | awk "{print $1}"'], { encoding: 'utf8' });
+  return (r.stdout || '').trim() || '127.0.0.1';
 }
 
 // Full detail for a provisioned Postgres, including BOTH a private (localhost) and a public
