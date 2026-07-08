@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // JustDeploy CLI — the primary interface. No forms: config is a file you own.
 //
+//   justdeploy setup [--no-docker]                          install Caddy + Docker, ready the host
+//   justdeploy doctor                                       check prerequisites (installs nothing)
 //   justdeploy add <repo> --type T --domain D [--name N]   register + write config, then deploy
 //   justdeploy deploy [name]                                run the deploy loop
 //   justdeploy ls                                           list apps and their state
@@ -29,6 +31,7 @@ import * as auth from '../src/auth.js';
 import * as backup from '../src/backup.js';
 import * as s3 from '../src/s3.js';
 import * as github from '../src/github.js';
+import * as setup from '../src/setup.js';
 import { row, TYPES } from '../src/table.js';
 import { logFile } from '../src/paths.js';
 import * as config from '../src/config.js';
@@ -323,6 +326,12 @@ async function cmdRestore(a) {
   console.log('Proxy apps relaunch if their build still exists; otherwise run `justdeploy deploy <name>` to rebuild from git.');
 }
 
+async function cmdSetup(a) {
+  try {
+    await setup.run({ docker: !('no-docker' in a), check: 'check' in a });
+  } catch (e) { die(e.message); }
+}
+
 async function cmdReconcile() {
   const database = db.open();
   await caddy.applyFromDb(database);
@@ -397,6 +406,8 @@ const [cmd, ...rest] = process.argv.slice(2);
 const a = flags(rest);
 try {
   switch (cmd) {
+    case 'setup': await cmdSetup(a); break;
+    case 'doctor': await cmdSetup({ ...a, check: true }); break;
     case 'add': await cmdAdd(a); break;
     case 'deploy': await cmdDeploy(a); break;
     case 'ls': cmdLs(); break;
@@ -413,7 +424,7 @@ try {
     case 'dashboard': await cmdDashboard(a); break;
     case 'reconcile': await cmdReconcile(); break;
     default:
-      console.log('usage: justdeploy <add|deploy|ls|logs|env|pg|rm|rollback|set|webhook|github|backup|restore|dashboard|reconcile>');
+      console.log('usage: justdeploy <setup|doctor|add|deploy|ls|logs|env|pg|rm|rollback|set|webhook|github|backup|restore|dashboard|reconcile>');
       process.exit(cmd ? 1 : 0);
   }
 } catch (e) {

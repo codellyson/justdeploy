@@ -28,12 +28,11 @@ See [CONCEPT.md](CONCEPT.md) for the design, [GAPS.md](GAPS.md) for the honest r
 
 ## Quick start
 
-On a fresh Ubuntu VPS with your domain's DNS pointed at it:
+On a fresh Ubuntu VPS with your domain's DNS pointed at it, one command installs everything —
+Node, the CLI, then Caddy + Docker via `justdeploy setup`:
 
 ```sh
-# prerequisites: Node >= 22.5, Caddy (admin API on :2019), git, Docker (only for postgres)
-git clone https://github.com/codellyson/justdeploy /opt/justdeploy
-cd /opt/justdeploy && npm link
+curl -fsSL https://raw.githubusercontent.com/codellyson/justdeploy/master/install.sh | bash
 
 # deploy your first app — the type decides build + run, and Caddy gets a Let's Encrypt cert
 justdeploy add https://github.com/you/site.git --type vite --domain app.example.com
@@ -45,23 +44,46 @@ justdeploy dashboard install --domain panel.example.com
 justdeploy webhook
 ```
 
+Prefer to do it by hand? Install Node ≥ 22.5, then `git clone … && npm link`, then run
+`justdeploy setup` (installs + wires up Caddy and Docker) and `justdeploy doctor` to verify.
+Full walkthrough: **[docs/install.html](docs/install.html)**.
+
 ## Requirements (on the server)
 
+`justdeploy setup` installs and configures Caddy and Docker for you on Debian/Ubuntu, so in
+practice the only thing you provide is **Node ≥ 22.5** (needed to run the CLI itself). For
+reference, the full set:
+
 - **Node ≥ 22.5** (uses the built-in `node:sqlite`; on Node 23 it prints an experimental
-  warning — silence with `NODE_OPTIONS=--disable-warning=ExperimentalWarning`)
-- **Caddy** running with its admin API on `localhost:2019` (the default)
-- **Docker** (only if you use the `postgres` resource)
+  warning — silenced with `NODE_OPTIONS=--disable-warning=ExperimentalWarning`)
+- **Caddy** with its admin API on `localhost:2019` — *installed by `justdeploy setup`*
+- **Docker** (only for the `postgres` resource) — *installed by `justdeploy setup`*
 - **git**
 
+Run `justdeploy doctor` any time to see which of these are present and reachable.
+
 ## Install
+
+One command on a fresh Debian/Ubuntu box (installs Node, clones, links the CLI, then runs
+`justdeploy setup`):
+
+```
+curl -fsSL https://raw.githubusercontent.com/codellyson/justdeploy/master/install.sh | bash
+```
+
+Or by hand:
 
 ```
 git clone <this repo> /opt/justdeploy
 cd /opt/justdeploy
 npm link            # or: ln -s /opt/justdeploy/bin/justdeploy /usr/local/bin/justdeploy
+justdeploy setup    # installs + wires up Caddy and Docker; idempotent, run as root
+justdeploy doctor   # check prerequisites without changing anything
 ```
 
-State lives in `/var/lib/justdeploy/state.db`; apps live under `/srv/<name>/`. Override with
+`justdeploy setup` handles the system dependencies (Caddy with its admin API, Docker for
+Postgres) on Debian/Ubuntu; pass `--no-docker` to skip Docker. State lives in
+`/var/lib/justdeploy/state.db`; apps live under `/srv/<name>/`. Override with
 `JUSTDEPLOY_HOME` and `JUSTDEPLOY_SRV`.
 
 ## Use

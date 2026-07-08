@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Install JustDeploy on your VPS</title>
+<meta name="description" content="A start-to-finish guide for installing JustDeploy on a fresh Ubuntu VPS and deploying your first app in about 10 minutes." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0a0b0d;
+    --bg-soft: #101216;
+    --panel: #14171c;
+    --panel-2: #171b21;
+    --line: #23272f;
+    --line-soft: #1b1f26;
+    --text: #e8eaed;
+    --muted: #8b929d;
+    --faint: #5c636e;
+    --acc: #d6f24e;       /* electric lime */
+    --acc-dim: #a9c23c;
+    --amber: #f4b740;
+    --term-red: #ff5f57;
+    --term-yellow: #febc2e;
+    --term-green: #28c840;
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Hanken Grotesk', system-ui, sans-serif;
+    --display: 'Bricolage Grotesque', var(--sans);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; scroll-padding-top: 90px; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+  ::selection { background: var(--acc); color: #0a0b0d; }
+
+  a { color: inherit; }
+  code { font-family: var(--mono); }
+
+  /* ---------- atmosphere ---------- */
+  .grain {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ---------- top bar ---------- */
+  header.top {
+    position: sticky; top: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 28px;
+    background: rgba(10,11,13,0.72);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .brand { display: flex; align-items: center; gap: 11px; font-family: var(--display); font-weight: 800; font-size: 18px; letter-spacing: -0.02em; }
+  .brand .mark {
+    width: 26px; height: 26px; border-radius: 7px; flex: none;
+    background: var(--acc); color: #0a0b0d;
+    display: grid; place-items: center; font-size: 15px; font-weight: 800;
+    box-shadow: 0 0 22px -4px var(--acc);
+  }
+  .brand .slash { color: var(--acc); }
+  .top nav { display: flex; gap: 22px; align-items: center; font-size: 14px; color: var(--muted); }
+  .top nav a { text-decoration: none; transition: color .15s; }
+  .top nav a:hover { color: var(--text); }
+  .top nav a.gh { color: var(--text); border: 1px solid var(--line); padding: 6px 13px; border-radius: 8px; }
+  .top nav a.gh:hover { border-color: var(--acc); }
+  @media (max-width: 720px){ .top nav a.hide-sm { display: none; } }
+
+  /* ---------- hero ---------- */
+  .hero { position: relative; z-index: 1; padding: 92px 28px 64px; max-width: 1180px; margin: 0 auto; }
+  .hero::before {
+    content: ""; position: absolute; top: -40px; left: 50%; transform: translateX(-50%);
+    width: 780px; height: 420px; max-width: 100%; pointer-events: none;
+    background: radial-gradient(60% 60% at 50% 0, rgba(214,242,78,0.10), transparent 70%);
+  }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 9px; position: relative;
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--acc); border: 1px solid var(--line); border-radius: 100px; padding: 6px 14px;
+    margin-bottom: 26px;
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--acc); box-shadow: 0 0 10px var(--acc); animation: pulse 2.4s infinite; }
+  @keyframes pulse { 0%,100%{ opacity:1 } 50%{ opacity:.35 } }
+  h1.title {
+    font-family: var(--display); font-weight: 800; letter-spacing: -0.035em; line-height: 1.02;
+    font-size: clamp(40px, 7vw, 82px); max-width: 15ch;
+  }
+  h1.title em { font-style: normal; color: var(--acc); }
+  .lede { margin-top: 24px; max-width: 60ch; font-size: clamp(17px, 2.2vw, 20px); color: var(--muted); }
+  .hero-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 32px; }
+  .chip {
+    font-family: var(--mono); font-size: 13px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 8px 13px;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .chip b { color: var(--acc); font-weight: 600; }
+
+  /* ---------- layout ---------- */
+  .wrap { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding: 0 28px 120px; display: grid; grid-template-columns: 232px 1fr; gap: 56px; }
+  @media (max-width: 940px){ .wrap { grid-template-columns: 1fr; gap: 0; } }
+
+  /* ---------- sidebar ---------- */
+  aside { position: sticky; top: 78px; align-self: start; height: max-content; padding-top: 8px; }
+  @media (max-width: 940px){ aside { display: none; } }
+  aside .toc-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); padding: 0 0 14px 2px; }
+  aside ol { list-style: none; counter-reset: s; display: flex; flex-direction: column; gap: 2px; }
+  aside li a {
+    counter-increment: s; text-decoration: none; color: var(--muted);
+    display: flex; align-items: baseline; gap: 11px; padding: 7px 10px; border-radius: 8px;
+    font-size: 14px; line-height: 1.35; transition: background .15s, color .15s;
+    border-left: 2px solid transparent;
+  }
+  aside li a::before { content: counter(s, decimal-leading-zero); font-family: var(--mono); font-size: 11px; color: var(--faint); flex: none; width: 18px; }
+  aside li a:hover { color: var(--text); background: var(--panel); }
+  aside li a.active { color: var(--acc); background: var(--panel); border-left-color: var(--acc); }
+  aside li a.active::before { color: var(--acc); }
+
+  /* ---------- content ---------- */
+  main { min-width: 0; }
+  section.step { padding: 46px 0 40px; border-top: 1px solid var(--line-soft); }
+  section.step:first-of-type { border-top: none; padding-top: 20px; }
+  .step-head { display: flex; align-items: flex-start; gap: 18px; margin-bottom: 20px; }
+  .step-num {
+    font-family: var(--display); font-weight: 800; font-size: 15px; line-height: 1;
+    color: #0a0b0d; background: var(--acc); border-radius: 9px; padding: 9px 11px; flex: none; margin-top: 4px;
+    min-width: 40px; text-align: center;
+  }
+  .step-num.opt { background: transparent; color: var(--faint); border: 1px dashed var(--line); }
+  h2 { font-family: var(--display); font-weight: 700; letter-spacing: -0.02em; font-size: clamp(24px, 3.4vw, 33px); line-height: 1.1; }
+  h2 .tag { font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; margin-left: 10px; vertical-align: middle; }
+  section p { color: var(--muted); margin: 14px 0; max-width: 66ch; }
+  section p strong, li strong { color: var(--text); font-weight: 600; }
+  section p code, li code, td code { font-family: var(--mono); font-size: 0.86em; background: var(--panel); border: 1px solid var(--line-soft); border-radius: 5px; padding: 1.5px 6px; color: var(--acc); }
+  main ul { margin: 14px 0 14px; padding-left: 0; list-style: none; max-width: 66ch; }
+  main ul li { position: relative; padding-left: 24px; margin: 9px 0; color: var(--muted); }
+  main ul li::before { content: ""; position: absolute; left: 4px; top: 11px; width: 7px; height: 7px; border-radius: 2px; background: var(--acc); transform: rotate(45deg); }
+  a.inline { color: var(--acc); text-decoration: none; border-bottom: 1px solid rgba(214,242,78,0.3); }
+  a.inline:hover { border-bottom-color: var(--acc); }
+
+  /* ---------- terminal code blocks ---------- */
+  .term { margin: 20px 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg-soft); box-shadow: 0 20px 40px -30px rgba(0,0,0,0.9); }
+  .term-bar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--line-soft); }
+  .term-bar .dots { display: flex; gap: 6px; }
+  .term-bar .dots i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+  .term-bar .dots i:nth-child(1){ background: var(--term-red); }
+  .term-bar .dots i:nth-child(2){ background: var(--term-yellow); }
+  .term-bar .dots i:nth-child(3){ background: var(--term-green); }
+  .term-bar .ttl { font-family: var(--mono); font-size: 12px; color: var(--faint); margin-left: 6px; }
+  .term-bar .copy {
+    margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--muted);
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; transition: all .15s;
+  }
+  .term-bar .copy:hover { color: var(--acc); border-color: var(--acc-dim); }
+  .term-bar .copy.done { color: var(--term-green); border-color: var(--term-green); }
+  pre { margin: 0; padding: 16px 18px; overflow-x: auto; font-family: var(--mono); font-size: 13.5px; line-height: 1.7; }
+  pre code { color: #cdd3da; }
+  .term .cmt { color: var(--faint); }
+  .term .cmd { color: var(--acc); }
+  .term .arg { color: #9fd0ff; }
+  .term .str { color: #e0c987; }
+
+  /* ---------- callouts ---------- */
+  .note { display: flex; gap: 13px; margin: 20px 0; padding: 15px 17px; border-radius: 11px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--acc); }
+  .note.warn { border-left-color: var(--amber); }
+  .note .ico { flex: none; font-family: var(--mono); font-weight: 700; color: var(--acc); font-size: 14px; margin-top: 1px; }
+  .note.warn .ico { color: var(--amber); }
+  .note p { margin: 0; font-size: 14.5px; color: var(--muted); max-width: none; }
+  .note p strong { color: var(--text); }
+
+  /* ---------- tables ---------- */
+  .tbl-wrap { margin: 20px 0; border: 1px solid var(--line); border-radius: 11px; overflow: hidden; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 12px 15px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); background: var(--panel); font-weight: 600; }
+  td { color: var(--muted); }
+  tr:last-child td { border-bottom: none; }
+  td:first-child code { color: var(--acc); }
+
+  /* ---------- diagram ---------- */
+  .diagram { margin: 24px 0; padding: 22px; border: 1px solid var(--line); border-radius: 14px; background:
+    linear-gradient(180deg, var(--panel), var(--bg-soft));
+    font-family: var(--mono); font-size: 12.5px; color: var(--muted); line-height: 1.9; overflow-x: auto; white-space: pre; }
+  .diagram b { color: var(--acc); font-weight: 500; }
+
+  /* ---------- footer ---------- */
+  footer { position: relative; z-index: 1; border-top: 1px solid var(--line-soft); padding: 40px 28px 60px; max-width: 1180px; margin: 0 auto; color: var(--faint); font-size: 14px; display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: center; }
+  footer .brand { font-size: 15px; }
+  footer a { color: var(--muted); text-decoration: none; }
+  footer a:hover { color: var(--acc); }
+
+  .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+  .reveal.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce){ .reveal { opacity:1; transform:none; } * { scroll-behavior:auto; } }
+</style>
+</head>
+<body>
+<div class="grain"></div>
+
+<header class="top">
+  <div class="brand"><span class="mark">J</span>Just<span class="slash">/</span>Deploy</div>
+  <nav>
+    <a href="#steps" class="hide-sm">Guide</a>
+    <a href="#step-verify" class="hide-sm">Verify</a>
+    <a href="#troubleshooting" class="hide-sm">Troubleshoot</a>
+    <a href="https://github.com/codellyson/justdeploy" class="gh">GitHub ↗</a>
+  </nav>
+</header>
+
+<div class="hero">
+  <span class="eyebrow"><span class="dot"></span> Self-hosted · bring your own VPS</span>
+  <h1 class="title">Install JustDeploy on <em>your</em> server.</h1>
+  <p class="lede">A start-to-finish guide for putting JustDeploy on a fresh Ubuntu box and shipping your
+  first app. One command installs the CLI; <code style="color:var(--acc)">justdeploy setup</code> installs
+  and wires up Caddy and Docker for you. Everything runs on one machine you own — no accounts, no control
+  plane. Budget about five minutes.</p>
+  <div class="hero-meta">
+    <span class="chip"><b>~5</b> minutes</span>
+    <span class="chip">Ubuntu <b>22.04 / 24.04</b></span>
+    <span class="chip">One <b>curl</b> command</span>
+    <span class="chip">Auto-installs <b>Caddy + Docker</b></span>
+    <span class="chip">Zero <b>npm deps</b></span>
+  </div>
+</div>
+
+<div class="wrap" id="steps">
+  <aside>
+    <div class="toc-label">The install</div>
+    <ol>
+      <li><a href="#step-dns">Point DNS</a></li>
+      <li><a href="#step-install">Install JustDeploy</a></li>
+      <li><a href="#step-setup">Ready the host</a></li>
+      <li><a href="#step-firstapp">Deploy an app</a></li>
+      <li><a href="#step-dashboard">Web dashboard</a></li>
+      <li><a href="#step-github">Private repos</a></li>
+      <li><a href="#step-webhook">Auto-deploy</a></li>
+      <li><a href="#step-backup">Backups</a></li>
+      <li><a href="#step-verify">Verify</a></li>
+      <li><a href="#troubleshooting">Troubleshoot</a></li>
+    </ol>
+  </aside>
+
+  <main>
+    <!-- what you're setting up -->
+    <section class="step reveal" id="overview" style="padding-top:8px">
+      <div class="step-head">
+        <span class="step-num opt">◇</span>
+        <h2>What you're setting up</h2>
+      </div>
+      <p>JustDeploy itself is a zero-dependency Node program. The only heavy lifting is done by
+      <strong>Caddy</strong> (TLS&nbsp;+&nbsp;reverse proxy) and, if you use databases,
+      <strong>Docker</strong>. Here's the whole box:</p>
+      <div class="diagram">          your domain(s)  ──DNS──►  <b>your VPS</b>
+                                       │
+ ┌──────────────────────────────────────────────────────┐
+ │  <b>Caddy</b> (root) ── TLS + proxy · admin API :2019       │
+ │     ├── static apps → /srv/&lt;name&gt;/current/…           │
+ │     ├── proxy apps  → 127.0.0.1:&lt;port&gt; (Node)          │
+ │     └── dashboard   → 127.0.0.1:4999  (optional UI)    │
+ │                                                        │
+ │  <b>justdeploy</b> CLI ── the engine: writes state.db,      │
+ │     │                  drives Caddy, runs your apps    │
+ │     └── state → /var/lib/justdeploy/state.db           │
+ │                                                        │
+ │  <b>Docker</b> (optional) ── one container per Postgres db  │
+ └──────────────────────────────────────────────────────┘</div>
+      <div class="note">
+        <span class="ico">i</span>
+        <p>Everything below runs <strong>on the server</strong>, as root. On a sudo user, prefix each
+        command with <code>sudo</code>. You'll need a VPS with root SSH access, a domain whose DNS you
+        control, and ports <strong>80</strong> and <strong>443</strong> open.</p>
+      </div>
+    </section>
+
+    <!-- 1 DNS -->
+    <section class="step reveal" id="step-dns">
+      <div class="step-head"><span class="step-num">01</span><h2>Point your DNS at the server</h2></div>
+      <p>Do this first so Caddy can fetch a TLS certificate the moment an app exists. For each hostname
+      you'll deploy, add an <strong>A record</strong> to your VPS's public IP:</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Record</th><th>Type</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td><code>app.example.com</code></td><td>A</td><td>&lt;your-server-ip&gt;</td></tr>
+          <tr><td><code>panel.example.com</code></td><td>A</td><td>&lt;your-server-ip&gt;</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note warn"><span class="ico">!</span>
+        <p>On Cloudflare, set these to <strong>DNS only</strong> (grey cloud), not proxied — Caddy
+        handles TLS itself. You only need the records for the first app and dashboard up front.</p>
+      </div>
+    </section>
+
+    <!-- 2 Install -->
+    <section class="step reveal" id="step-install">
+      <div class="step-head"><span class="step-num">02</span><h2>Install JustDeploy</h2></div>
+      <p>One command on a fresh Ubuntu box. It installs Node (the one thing JustDeploy needs to run
+      itself), clones the repo, links the <code>justdeploy</code> CLI, then hands off to
+      <code>justdeploy setup</code> — which installs and wires up <strong>everything else</strong>.
+      Re-running is safe; each step checks first.</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">root@vps — one command</span><button class="copy">copy</button></div>
+<pre><code><span class="cmd">curl</span> -fsSL https://raw.githubusercontent.com/codellyson/justdeploy/master/install.sh | <span class="cmd">bash</span></code></pre>
+      </div>
+      <div class="note"><span class="ico">i</span>
+        <p>Piping a script to <code>bash</code> as root? Reasonable to read it first —
+        <a class="inline" href="https://github.com/codellyson/justdeploy/blob/master/install.sh">it's short and on GitHub</a>.
+        Prefer to do it by hand? The manual path is below.</p>
+      </div>
+
+      <p style="margin-top:26px"><strong>Manual alternative.</strong> JustDeploy uses Node's built-in
+      SQLite, so it needs <strong>Node ≥ 22.5</strong>. Install that, clone, and link — then Step&nbsp;3
+      (<code>setup</code>) does Caddy and Docker.</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">manual install</span><button class="copy">copy</button></div>
+<pre><code><span class="cmt"># Node 22 (NodeSource)</span>
+<span class="cmd">apt-get</span> update && <span class="cmd">apt-get</span> install -y ca-certificates curl gnupg git
+<span class="cmd">curl</span> -fsSL https://deb.nodesource.com/setup_22.x | <span class="cmd">bash</span> -
+<span class="cmd">apt-get</span> install -y nodejs
+
+<span class="cmt"># JustDeploy — pure Node stdlib, no npm deps for the engine</span>
+<span class="cmd">git</span> clone https://github.com/codellyson/justdeploy /opt/justdeploy
+<span class="cmd">cd</span> /opt/justdeploy && <span class="cmd">npm</span> link</code></pre>
+      </div>
+      <p>State is created on first use at <code>/var/lib/justdeploy/state.db</code>; apps live under
+      <code>/srv/&lt;name&gt;/</code>. Override with <code>JUSTDEPLOY_HOME</code> and
+      <code>JUSTDEPLOY_SRV</code> if needed.</p>
+    </section>
+
+    <!-- 3 setup -->
+    <section class="step reveal" id="step-setup">
+      <div class="step-head"><span class="step-num">03</span><h2>Ready the host <span class="tag">auto</span></h2></div>
+      <p>This is the part JustDeploy does for you. <code>setup</code> detects what's missing and installs
+      <strong>Caddy</strong> (TLS + reverse proxy, with its admin API on <code>localhost:2019</code>) and
+      <strong>Docker</strong> (for Postgres), then makes sure the Caddy service and admin API are live. The
+      one-command installer above already ran it; run it yourself after a manual install:</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">provision the host</span><button class="copy">copy</button></div>
+<pre><code><span class="cmd">justdeploy</span> setup                <span class="cmt"># installs Caddy + Docker, starts + verifies Caddy</span>
+<span class="cmd">justdeploy</span> setup <span class="arg">--no-docker</span>    <span class="cmt"># skip Docker if you won't use Postgres</span></code></pre>
+      </div>
+      <p>It's idempotent — anything already present is skipped, so it's safe to re-run. It runs as root
+      (it installs system packages) and only supports Debian/Ubuntu; on anything else it prints the manual
+      steps instead of guessing. When it finishes you'll see a green checklist:</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">justdeploy setup — output</span></div>
+<pre><code><span class="cmd">→</span> Caddy already installed — skipping.
+<span class="cmd">→</span> enabling + starting the Caddy service…
+<span class="cmd">→</span> installing Docker Engine (get.docker.com)…
+
+  <span class="str">✓</span> Node 22.11.0
+  <span class="str">✓</span> Caddy installed
+  <span class="str">✓</span> Caddy service running
+  <span class="str">✓</span> Caddy admin API (http://localhost:2019)
+  <span class="str">✓</span> Docker
+
+<span class="str">Host ready.</span> Deploy your first app:
+  justdeploy add https://github.com/you/site.git --type vite --domain app.example.com</code></pre>
+      </div>
+      <div class="note"><span class="ico">i</span>
+        <p>Caddy installs as a <strong>root systemd service</strong> with the admin API enabled by default —
+        exactly what JustDeploy needs (root to bind :80/:443 and manage the DB firewall). JustDeploy owns
+        Caddy's live config through that API and rebuilds it from <code>state.db</code>, so you never touch
+        <code>/etc/caddy/Caddyfile</code>.</p>
+      </div>
+    </section>
+
+    <!-- 6 first app -->
+    <section class="step reveal" id="step-firstapp">
+      <div class="step-head"><span class="step-num">04</span><h2>Deploy your first app</h2></div>
+      <p>Point JustDeploy at a public git repo and tell it the type. The type decides how the app builds
+      and runs — that's the whole configuration.</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">deploy</span><button class="copy">copy</button></div>
+<pre><code><span class="cmt"># a Vite / React / static site — served directly by Caddy, with a TLS cert</span>
+<span class="cmd">justdeploy</span> add https://github.com/you/site.git <span class="arg">--type</span> vite <span class="arg">--domain</span> app.example.com
+
+<span class="cmt"># a long-running Node app (Adonis / Next) — proxied, zero-downtime swaps</span>
+<span class="cmd">justdeploy</span> add https://github.com/you/api.git <span class="arg">--type</span> adonis <span class="arg">--domain</span> api.example.com</code></pre>
+      </div>
+      <p><code>add</code> clones, builds, wires up Caddy (which fetches a Let's Encrypt cert), and starts
+      serving. Watch it and manage it:</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">day-to-day</span><button class="copy">copy</button></div>
+<pre><code><span class="cmd">justdeploy</span> ls               <span class="cmt"># what's deployed, ports, pids</span>
+<span class="cmd">justdeploy</span> logs app -f      <span class="cmt"># tail the build/run log</span>
+<span class="cmd">justdeploy</span> deploy app       <span class="cmt"># redeploy (pull → build → swap)</span>
+<span class="cmd">justdeploy</span> rollback app     <span class="cmt"># instantly revert to the previous release</span></code></pre>
+      </div>
+      <p>Supported <code>--type</code> values: <code>vite</code>, <code>react</code>, <code>static</code>,
+      <code>adonis</code>, <code>nextjs</code>, <code>postgres</code>.</p>
+    </section>
+
+    <!-- 7 dashboard -->
+    <section class="step reveal" id="step-dashboard">
+      <div class="step-head"><span class="step-num opt">05</span><h2>Web dashboard <span class="tag">optional</span></h2></div>
+      <p>JustDeploy ships a Vercel-style control panel and <strong>deploys its own dashboard</strong> like
+      any other app. One command builds the React UI, installs a systemd service, and adds the TLS route:</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">install the panel</span><button class="copy">copy</button></div>
+<pre><code><span class="cmd">justdeploy</span> dashboard install <span class="arg">--domain</span> panel.example.com</code></pre>
+      </div>
+      <p>It prints an admin password — <strong>save it</strong>. The panel runs as the
+      <code>justdeploy-dashboard</code> systemd service on <code>127.0.0.1:4999</code>, served over HTTPS
+      by Caddy. Reset the password any time with <code>justdeploy dashboard password &lt;new&gt;</code>.
+      Then visit <code>https://panel.example.com</code> to create projects, stream logs, roll back, manage
+      env, and provision databases from the browser.</p>
+    </section>
+
+    <!-- 8 github -->
+    <section class="step reveal" id="step-github">
+      <div class="step-head"><span class="step-num opt">06</span><h2>Private repos <span class="tag">optional</span></h2></div>
+      <p>Public repos clone without auth. To deploy <strong>private</strong> repos, give JustDeploy a GitHub
+      personal access token (classic, <code>repo</code> scope — create one at
+      <code>github.com/settings/tokens</code>):</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">connect github</span><button class="copy">copy</button></div>
+<pre><code><span class="cmd">justdeploy</span> github &lt;your-token&gt;     <span class="cmt"># stores it; private repos will now clone</span>
+<span class="cmd">justdeploy</span> github                  <span class="cmt"># show connection status</span>
+<span class="cmd">justdeploy</span> github --clear          <span class="cmt"># disconnect</span></code></pre>
+      </div>
+      <p>In the dashboard you can paste the same token in the new-project flow to browse and pick private
+      repos directly.</p>
+    </section>
+
+    <!-- 9 webhook -->
+    <section class="step reveal" id="step-webhook">
+      <div class="step-head"><span class="step-num opt">07</span><h2>Git-push auto-deploy <span class="tag">optional</span></h2></div>
+      <p>Turn on a signed webhook so pushing to a repo's <strong>default branch</strong> redeploys the
+      matching app automatically:</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">enable webhook</span><button class="copy">copy</button></div>
+<pre><code><span class="cmd">justdeploy</span> webhook</code></pre>
+      </div>
+      <p>It prints the Payload URL and secret to paste into <strong>GitHub → repo Settings → Webhooks</strong>
+      (content type <code>application/json</code>, "Just the push event"). Rotate the secret with
+      <code>justdeploy webhook --rotate</code>.</p>
+      <div class="note"><span class="ico">i</span>
+        <p>The webhook is received by the dashboard service, so this needs the dashboard installed
+        (Step&nbsp;5) to have a public URL.</p>
+      </div>
+    </section>
+
+    <!-- 10 backup -->
+    <section class="step reveal" id="step-backup">
+      <div class="step-head"><span class="step-num opt">08</span><h2>Off-box backups <span class="tag">recommended</span></h2></div>
+      <p><code>state.db</code> and each app's <code>data/</code> dir are the only irreplaceable state on the
+      box — so back them up elsewhere. JustDeploy uploads to any S3-compatible bucket (AWS S3 or Cloudflare
+      R2), no extra dependencies:</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">backups</span><button class="copy">copy</button></div>
+<pre><code><span class="cmd">justdeploy</span> backup config <span class="arg">--endpoint</span> https://&lt;acct&gt;.r2.cloudflarestorage.com \
+  <span class="arg">--bucket</span> my-backups <span class="arg">--access-key</span> &lt;k&gt; <span class="arg">--secret-key</span> &lt;s&gt; <span class="arg">--region</span> auto
+
+<span class="cmd">justdeploy</span> backup                    <span class="cmt"># snapshot + upload (state.db + data + pg_dump)</span>
+<span class="cmd">justdeploy</span> backup --schedule daily   <span class="cmt"># optional: install a systemd timer</span>
+<span class="cmd">justdeploy</span> restore &lt;file&gt; --yes      <span class="cmt"># bring it all back</span></code></pre>
+      </div>
+      <div class="note warn"><span class="ico">!</span>
+        <p>The backup archive is <code>chmod 600</code> — it contains secrets (env vars, admin hash,
+        webhook secret). Keep it somewhere private.</p>
+      </div>
+    </section>
+
+    <!-- verify -->
+    <section class="step reveal" id="step-verify">
+      <div class="step-head"><span class="step-num opt">✓</span><h2>Verify the install</h2></div>
+      <p>One command reports everything — it installs nothing, just checks:</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">justdeploy doctor</span><button class="copy">copy</button></div>
+<pre><code><span class="cmd">justdeploy</span> doctor
+
+  <span class="str">✓</span> Node 22.11.0
+  <span class="str">✓</span> Caddy installed
+  <span class="str">✓</span> Caddy service running
+  <span class="str">✓</span> Caddy admin API (http://localhost:2019)
+  <span class="str">✓</span> Docker</code></pre>
+      </div>
+      <p>All green? Open your app's domain in a browser — it should load over HTTPS with a valid
+      certificate. Any red line tells you what to fix; re-run <code>justdeploy setup</code> to install
+      what's missing.</p>
+      <div class="note"><span class="ico">i</span>
+        <p><strong>Firewall (ufw)?</strong> Allow <code>OpenSSH</code>, <code>80/tcp</code>, and
+        <code>443/tcp</code>. Docker's published ports bypass ufw by design — JustDeploy binds Postgres to
+        <code>127.0.0.1</code> only, and enforces a source-IP allowlist in the <code>DOCKER-USER</code>
+        chain when you deliberately make a database public. You don't manage those rules by hand.</p>
+      </div>
+    </section>
+
+    <!-- troubleshooting -->
+    <section class="step reveal" id="troubleshooting">
+      <div class="step-head"><span class="step-num opt">?</span><h2>Troubleshooting</h2></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Symptom</th><th>Cause &amp; fix</th></tr></thead>
+        <tbody>
+          <tr><td><code>cannot reach Caddy admin</code></td><td>Caddy isn't running or the admin API is off. <code>systemctl status caddy</code>; make sure no custom Caddyfile disabled the admin endpoint.</td></tr>
+          <tr><td>Cert error / domain won't resolve</td><td>DNS A record isn't pointing at the server yet, or is proxied (Cloudflare orange cloud). Set it to DNS-only and wait for propagation.</td></tr>
+          <tr><td><code>node:sqlite</code> errors on start</td><td>Node older than 22.5. Check <code>node --version</code> and reinstall from Step&nbsp;2.</td></tr>
+          <tr><td><code>docker: command not found</code></td><td>Docker isn't installed — do Step&nbsp;4.</td></tr>
+          <tr><td>Private repo fails to clone</td><td>No GitHub token, or it lacks <code>repo</code> scope. Re-run <code>justdeploy github &lt;token&gt;</code>.</td></tr>
+          <tr><td>Deploy fails</td><td>The failure prints a plain-English reason <em>and</em> the fix — read it in <code>justdeploy logs &lt;app&gt;</code> or the dashboard's deploy log.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <!-- one-shot -->
+    <section class="step reveal" id="bootstrap">
+      <div class="step-head"><span class="step-num opt">⚡</span><h2>The whole thing, condensed</h2></div>
+      <p>On a fresh Ubuntu box with DNS pointed at it, the entire install is two lines — the installer
+      handles Node, Caddy, Docker, and the CLI:</p>
+      <div class="term">
+        <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">zero to deployed</span><button class="copy">copy</button></div>
+<pre><code><span class="cmt"># 1. install everything (Node → CLI → Caddy + Docker via `justdeploy setup`)</span>
+<span class="cmd">curl</span> -fsSL https://raw.githubusercontent.com/codellyson/justdeploy/master/install.sh | <span class="cmd">bash</span>
+
+<span class="cmt"># 2. ship an app</span>
+<span class="cmd">justdeploy</span> add https://github.com/you/site.git <span class="arg">--type</span> vite <span class="arg">--domain</span> app.example.com</code></pre>
+      </div>
+      <p>Piping a script to <code>bash</code> as root deserves a glance first —
+      <a class="inline" href="https://github.com/codellyson/justdeploy/blob/master/install.sh">read <code>install.sh</code> on GitHub</a>;
+      it's short and does exactly what Steps 2–3 describe.</p>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="brand"><span class="mark">J</span>Just<span class="slash">/</span>Deploy</div>
+  <div>
+    <a href="https://github.com/codellyson/justdeploy">GitHub</a> ·
+    <a href="../README.md">README</a> ·
+    <a href="../CONCEPT.md">Concept</a> ·
+    <a href="port-swap.md">Port swap</a>
+  </div>
+  <div style="color:var(--faint)">Lean, single-server deploys · bring your own VPS.</div>
+</footer>
+
+<script>
+  // copy-to-clipboard on each terminal block
+  document.querySelectorAll('.term').forEach(term => {
+    const btn = term.querySelector('.copy');
+    const pre = term.querySelector('pre');
+    if (!btn || !pre) return;
+    btn.addEventListener('click', async () => {
+      const text = pre.innerText.replace(/ /g, ' ');
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = 'copied ✓'; btn.classList.add('done');
+        setTimeout(() => { btn.textContent = 'copy'; btn.classList.remove('done'); }, 1600);
+      } catch { btn.textContent = 'select all'; }
+    });
+  });
+
+  // scrollspy for the sidebar
+  const links = [...document.querySelectorAll('aside a')];
+  const map = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+  const spy = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        links.forEach(l => l.classList.remove('active'));
+        const a = map.get(e.target.id);
+        if (a) a.classList.add('active');
+      }
+    });
+  }, { rootMargin: '-30% 0px -60% 0px' });
+  document.querySelectorAll('section.step[id]').forEach(s => spy.observe(s));
+
+  // reveal on scroll
+  const rev = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); rev.unobserve(e.target); } });
+  }, { rootMargin: '0px 0px -8% 0px' });
+  document.querySelectorAll('.reveal').forEach(el => rev.observe(el));
+</script>
+</body>
+</html>
