@@ -38,7 +38,7 @@ export function generate(apps, dashboard) {
         `}`,
       );
     }
-    // resource/file types (postgres, sqlite) never touch Caddy.
+    // resource types (postgres) never touch Caddy.
   }
   return blocks.join('\n\n') + '\n';
 }

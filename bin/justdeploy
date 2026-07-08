@@ -56,7 +56,7 @@ async function cmdAdd(a) {
   if (!TYPES.includes(a.type)) die(`--type must be one of: ${TYPES.join(', ')}`);
   if (!name) die('provide a repo URL or --name');
   const serve = row(a.type).serve;
-  if (serve !== 'resource' && serve !== 'file' && !a.domain) die('--domain is required');
+  if (serve !== 'resource' && !a.domain) die('--domain is required');
 
   const database = db.open();
   if (db.getApp(database, name) || db.getResource(database, name)) die(`"${name}" already exists — rm it first, or pick another name`);
@@ -71,7 +71,6 @@ async function cmdAdd(a) {
   if (a.type === 'adonis') {
     db.setEnv(database, name, 'APP_KEY', randomBytes(32).toString('base64url'));
   }
-  if (a.type === 'sqlite' || serve === 'file') engine.ensureDataDir(name);
 
   console.log(`registered ${name} (${a.type}${a.domain ? ' → ' + a.domain : ''})`);
 

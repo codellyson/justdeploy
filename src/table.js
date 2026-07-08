@@ -1,7 +1,7 @@
 // The framework table — the ONE thing that varies between app types.
 // Adding a framework later is appending a row here, not writing new logic.
 //
-//   serve:   'static' | 'proxy' | 'resource' | 'file'
+//   serve:   'static' | 'proxy' | 'resource'
 //   build:   shell string run in the repo dir (null = no build step)
 //   artifact: for static, the folder to serve, relative to the repo
 //   cwd:     for proxy, the dir to launch from, relative to the repo
@@ -46,9 +46,6 @@ export const TABLE = {
   },
   postgres: {
     serve: 'resource',
-  },
-  sqlite: {
-    serve: 'file',
   },
 };
 

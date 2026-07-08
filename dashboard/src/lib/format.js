@@ -34,7 +34,6 @@ export const TYPE_LABEL = {
   adonis: 'AdonisJS',
   nextjs: 'Next.js',
   postgres: 'Postgres',
-  sqlite: 'SQLite',
 };
 export const typeLabel = (t) => TYPE_LABEL[t] || t;
 

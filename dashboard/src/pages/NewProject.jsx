@@ -7,9 +7,9 @@ import { TypeIcon, Icon } from '../components/icons';
 import { GithubSource } from '../components/GithubSource';
 import { cx, typeLabel, slug, suggestName, nameFromRepo } from '../lib/format';
 
-const TYPES = ['react', 'vite', 'static', 'adonis', 'nextjs', 'postgres', 'sqlite'];
+const TYPES = ['react', 'vite', 'static', 'adonis', 'nextjs', 'postgres'];
 const PROXY = ['adonis', 'nextjs'];
-const needsRepoDomain = (t) => t && !['postgres', 'sqlite'].includes(t);
+const needsRepoDomain = (t) => t && t !== 'postgres';
 
 function StepDot({ n, active }) {
   return (
@@ -130,8 +130,7 @@ export function NewProject() {
               <div className="flex flex-1 basis-52 flex-col gap-1.5"><label className="label-tiny">Persist dirs (optional)</label><input value={f.persist || ''} onChange={set('persist')} placeholder="tmp" className="field font-mono text-[0.8rem]" /></div>
             </div>
           )}
-          {type === 'postgres' && <p className="text-sm text-muted">Provisions a Postgres container on the private network and copies a connection string.</p>}
-          {type === 'sqlite' && <p className="text-sm text-muted">Reserves a persistent <span className="font-mono">data/</span> path for a SQLite file.</p>}
+          {type === 'postgres' && <p className="text-sm text-muted">Provisions a Postgres container and hands out a connection string.</p>}
 
           {err && <p className="text-sm text-danger">{err}</p>}
 

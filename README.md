@@ -124,8 +124,7 @@ Two optional per-app knobs, set at `add`, via `justdeploy set`, or in the dashbo
 | `static` | static      | serves the repo root                                     |
 | `adonis` | proxy       | `APP_KEY`, `HOST=0.0.0.0`, `PORT`, `NODE_ENV`            |
 | `nextjs` | proxy       | `HOSTNAME=0.0.0.0`, `PORT`, runs the standalone asset copy |
-| `postgres` | resource  | `docker run` on `deploy-net`, no published port          |
-| `sqlite` | file        | reserves the persistent `data/` dir                      |
+| `postgres` | resource  | `docker run` + scoped non-superuser role, TLS, localhost port |
 
 ## Config & source of truth
 

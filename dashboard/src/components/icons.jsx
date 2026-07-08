@@ -7,7 +7,7 @@ import {
   LuLock, LuEye, LuEyeOff, LuTriangleAlert, LuZap, LuRocket, LuLayers, LuSettings2,
   LuSearch,
 } from 'react-icons/lu';
-import { SiReact, SiVite, SiNextdotjs, SiAdonisjs, SiPostgresql, SiSqlite, SiGithub } from 'react-icons/si';
+import { SiReact, SiVite, SiNextdotjs, SiAdonisjs, SiPostgresql, SiGithub } from 'react-icons/si';
 
 export const Icon = {
   ChevronRight: LuChevronRight,
@@ -49,7 +49,6 @@ const TYPE_ICON = {
   adonis: SiAdonisjs,
   nextjs: SiNextdotjs,
   postgres: SiPostgresql,
-  sqlite: SiSqlite,
 };
 
 export function TypeIcon({ type, className }) {

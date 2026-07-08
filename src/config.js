@@ -64,7 +64,7 @@ export function validate(cfg) {
   if (!TYPES.includes(cfg.type)) {
     errs.push(`type must be one of: ${TYPES.join(', ')}`);
   }
-  const serveNeedsDomain = cfg.type !== 'postgres' && cfg.type !== 'sqlite';
+  const serveNeedsDomain = cfg.type !== 'postgres';
   if (serveNeedsDomain && !cfg.domain) {
     errs.push('domain is required for deployable types');
   }

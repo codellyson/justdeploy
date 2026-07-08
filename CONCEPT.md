@@ -16,7 +16,6 @@ The whole product is:
 - Two build-and-proxy templates (Node processes)
 - One static template (folders)
 - One saved Postgres docker command
-- One SQLite path convention
 
 Everything else is the same deploy loop wrapped around a small framework table.
 
@@ -42,7 +41,6 @@ This table is the only thing that varies between app types. Everything else is s
 | `adonis`   | `npm ci && node ace build && cp package-lock.json build/ && cd build && npm ci --omit=dev` | `build/bin/server.js` | proxy |
 | `nextjs`   | `npm ci && npm run build`                                          | `.next/standalone/server.js`  | proxy            |
 | `postgres` | none                                                               | container                     | one-time recipe  |
-| `sqlite`   | none                                                               | a file                        | nothing          |
 
 Adding a framework later is appending a row, not writing new logic.
 
@@ -170,18 +168,18 @@ superuser stays internal. **TLS** is on (self-signed cert, `sslmode=require`). O
 expose publicly (`-p 0.0.0.0:<port>`), gated by a source-**IP allowlist** enforced in the
 `DOCKER-USER` iptables chain — because Docker's port publishing bypasses `ufw`.
 
-### SQLite
+### SQLite (not a deploy type)
 
-The anti-deploy. Nothing to run. The only rule: the `.db` file must live on a path that
-persists across deploys, never inside the build directory that gets replaced.
+There is no `sqlite` app type — SQLite isn't a service to deploy. If your app *uses* a SQLite
+file, keep it on a path that persists across deploys (via the `persist` field), never inside
+the build directory that gets replaced.
 
 ```
 /srv/gobi-design/data/app.db   survives
 /srv/gobi-design/build/app.db  wiped next deploy
 ```
 
-Point the app's DB path at a stable `data/` dir. That single convention is the entire
-SQLite support.
+Point the app's DB path at a stable `data/` dir. That's a `persist` convention, not a type.
 
 ## Project config & source of truth
 
@@ -245,7 +243,6 @@ Three steps:
 - **React / Vite / static** configure nothing. Source and domain, then deploy.
 - **Postgres** provisions the container and records a connection string. It is a resource
   you *add* (and reference via `postgres:` in an app's config), not a thing you deploy.
-- **SQLite** reserves the persistent `data/` path. Nothing else.
 
 In the common case the only things a user supplies are the **domain** and, optionally,
 their **own env vars**. Everything else the type knew.

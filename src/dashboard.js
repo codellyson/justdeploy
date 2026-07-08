@@ -384,14 +384,13 @@ async function api(database, req, res, path) {
       const { conn } = pg.provision(database, name);
       return send(res, 200, { ok: true, conn });
     }
-    if (serve !== 'file' && !domain) return send(res, 400, { error: 'domain required' });
+    if (!domain) return send(res, 400, { error: 'domain required' });
 
     db.upsertApp(database, {
       name, type, domain, repo, serve,
       release_cmd: release || null, persist: persist || null, created_at: now(),
     });
     if (type === 'adonis') db.setEnv(database, name, 'APP_KEY', randomBytes(32).toString('base64url'));
-    if (serve === 'file') { engine.ensureDataDir(name); return send(res, 200, { ok: true }); }
 
     kickDeploy(database, name);
     return send(res, 200, { ok: true, deploying: true });
