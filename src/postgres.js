@@ -208,8 +208,10 @@ export function resetPassword(database, name) {
 export function deprovision(database, resourceName, { keepData = false } = {}) {
   const base = resourceName.replace(/-db$/, '');
   const volume = `${base}-pgdata`;
+  firewall.clear(resourceName); // drop any allowlist rules so they don't leak to a reused port
   spawnSync('docker', ['rm', '-f', resourceName], { encoding: 'utf8' });
   if (!keepData) spawnSync('docker', ['volume', 'rm', '-f', volume], { encoding: 'utf8' });
   db.removeResource(database, resourceName);
+  db.setSetting(database, `pgsuper:${resourceName}`, ''); // clear stored superuser password
   return { container: resourceName, volume, keptData: keepData };
 }
