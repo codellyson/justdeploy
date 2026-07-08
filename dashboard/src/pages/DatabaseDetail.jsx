@@ -97,6 +97,8 @@ export function DatabaseDetail() {
             <span className={cx('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium', tone(st).soft, tone(st).text)}>
               <span className={cx('h-1.5 w-1.5 rounded-full', tone(st).dot)} />{r.running ? 'Running' : r.status}
             </span>
+            {r.tls && <span className="inline-flex items-center gap-1 rounded-full bg-success/[0.14] px-2 py-0.5 text-[0.7rem] font-medium text-success"><Icon.Lock className="h-3 w-3" /> TLS</span>}
+            {r.scoped && <span className="inline-flex items-center gap-1 rounded-full surface-2 px-2 py-0.5 text-[0.7rem] font-medium text-muted" title="Handed-out role is a non-superuser">scoped role</span>}
           </div>
           <div className="mt-0.5 font-mono text-xs text-muted">🐘 {r.image || 'postgres'}</div>
         </div>

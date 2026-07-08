@@ -164,6 +164,12 @@ them. Publish the port to **localhost only** (`-p 127.0.0.1:<port>:5432`) — ea
 gets its own host port from 5433 up — and the connection string uses `127.0.0.1:<port>`.
 Binding to 127.0.0.1 keeps it off the public internet; the named volume survives redeploys.
 
+**Hardening.** Each database hands out a scoped **non-superuser** role (`app`, owns the DB —
+full DDL/DML + trusted extensions, but no `COPY … FROM PROGRAM` RCE); the `postgres`
+superuser stays internal. **TLS** is on (self-signed cert, `sslmode=require`). Optionally
+expose publicly (`-p 0.0.0.0:<port>`), gated by a source-**IP allowlist** enforced in the
+`DOCKER-USER` iptables chain — because Docker's port publishing bypasses `ufw`.
+
 ### SQLite
 
 The anti-deploy. Nothing to run. The only rule: the `.db` file must live on a path that
