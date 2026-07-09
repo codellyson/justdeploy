@@ -160,10 +160,21 @@ async function cmdDeploy(a) {
 function cmdLs() {
   const database = db.open();
   const apps = db.listApps(database);
-  if (!apps.length) return console.log('no apps yet — try: justdeploy add <repo> --type vite --domain example.com');
+  const resources = db.listResources(database);
+  if (!apps.length && !resources.length) return console.log('nothing yet — try: justdeploy add <repo> --type vite');
   for (const a of apps) {
     const where = a.serve === 'proxy' ? `:${a.live_port ?? '-'} pid ${a.live_pid ?? '-'}` : a.serve;
     console.log(`${a.name.padEnd(20)} ${a.type.padEnd(8)} ${(a.domain || '').padEnd(24)} ${where}`);
+  }
+  for (const r of resources) {
+    if (r.kind !== 'postgres') { console.log(`${r.name.padEnd(20)} ${r.kind}`); continue; }
+    let i; try { i = pg.info(database, r.name); } catch { i = null; }
+    if (!i) { console.log(`${r.name.padEnd(20)} ${'postgres'.padEnd(8)} ${(':' + (r.port || '-')).padEnd(24)} (no container)`); continue; }
+    const access = !i.public ? 'internal'
+      : i.allowIps.length ? `public (allow ${i.allowIps.join(',')})`
+      : 'public (open)';
+    const status = [i.running ? 'up' : 'down', access, i.tls ? 'tls' : null].filter(Boolean).join(' ');
+    console.log(`${r.name.padEnd(20)} ${'postgres'.padEnd(8)} ${(':' + i.port).padEnd(24)} ${status}`);
   }
 }
 
