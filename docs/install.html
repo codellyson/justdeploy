@@ -516,23 +516,22 @@
     <!-- uninstall -->
     <section class="step reveal" id="step-uninstall">
       <div class="step-head"><span class="step-num opt">⌫</span><h2>Uninstall</h2></div>
-      <p>Reverses <code>setup</code>. By default it removes the <strong>management layer</strong> — the
-      dashboard service, the backup timer, and the CLI — but <strong>leaves your apps serving and all data
-      intact</strong>, so you can reinstall and pick up where you left off. It's destructive, so it needs
-      <code>--yes</code>.</p>
+      <p>Reverses <code>setup</code>. By default it removes <strong>everything</strong> — apps, databases,
+      Caddy (package + config), state, and the checkout — after printing the plan and prompting
+      <code>y/N</code>. Flags only <em>hold things back</em>:</p>
       <div class="term">
         <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">uninstall</span><button class="copy">copy</button></div>
-<pre><code><span class="cmd">justdeploy</span> uninstall <span class="arg">--yes</span>                       <span class="cmt"># remove the tool, keep apps + data</span>
-<span class="cmd">justdeploy</span> uninstall <span class="arg">--purge --yes</span>               <span class="cmt"># tear down every app + db, wipe state/data/checkout</span>
-<span class="cmd">justdeploy</span> uninstall <span class="arg">--purge --remove-deps --yes</span>  <span class="cmt"># + apt-purge Caddy (Docker is left alone)</span></code></pre>
+<pre><code><span class="cmd">justdeploy</span> uninstall                 <span class="cmt"># full removal (prompts to confirm)</span>
+<span class="cmd">justdeploy</span> uninstall <span class="arg">--keep-data</span>     <span class="cmt"># keep state.db, app files, and db volumes</span>
+<span class="cmd">justdeploy</span> uninstall <span class="arg">--keep-caddy</span>    <span class="cmt"># leave Caddy installed, just drop the routes</span>
+<span class="cmd">justdeploy</span> uninstall <span class="arg">--yes</span>           <span class="cmt"># skip the prompt (scripts / non-interactive)</span></code></pre>
       </div>
-      <p>Run it with no flags first — it prints exactly what each option will do and refuses until you add
-      <code>--yes</code>, so you always see the plan before anything happens. <code>--purge</code> reuses the
-      same teardown as <code>justdeploy rm</code> (stops processes, removes containers + volumes, drops Caddy
-      routes) for every app and database, then deletes state and the checkout.</p>
+      <p>It always shows exactly what it will do and waits for <code>y</code> before touching anything, so
+      there's no way to nuke the box by fat-fingering one command. Docker is always left in place — it's a
+      shared tool. Piped/non-interactive runs (no terminal) need <code>--yes</code> instead of the prompt.</p>
       <div class="note warn"><span class="ico">!</span>
-        <p><code>--purge</code> is irreversible and takes your databases with it. If there's anything you
-        might want back, run <code>justdeploy backup</code> first.</p>
+        <p>The default takes your databases with it. If there's anything you might want back, run
+        <code>justdeploy backup</code> first — or add <code>--keep-data</code>.</p>
       </div>
     </section>
 

@@ -3,7 +3,7 @@
 //
 //   justdeploy setup [--no-docker]                          install Caddy + Docker, ready the host
 //   justdeploy doctor                                       check prerequisites (installs nothing)
-//   justdeploy uninstall [--purge] [--remove-deps] --yes    remove JustDeploy (--purge wipes data)
+//   justdeploy uninstall [--keep-data] [--keep-caddy]       remove JustDeploy (prompts; full by default)
 //   justdeploy add <repo> --type T --domain D [--name N]   register + write config, then deploy
 //   justdeploy deploy [name]                                run the deploy loop
 //   justdeploy ls                                           list apps and their state
@@ -24,6 +24,7 @@ import { existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { spawn, execSync } from 'node:child_process';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createInterface } from 'node:readline/promises';
 import * as db from '../src/db.js';
 import * as engine from '../src/engine.js';
 import * as caddy from '../src/caddy.js';
@@ -64,6 +65,16 @@ function flags(argv) {
 function die(msg) {
   console.error(`error: ${msg}`);
   process.exit(1);
+}
+
+// Interactive y/N. At a terminal it prompts; when piped/scripted (no TTY) there's nothing to
+// prompt, so require an explicit --yes instead of hanging.
+async function confirm(question) {
+  if (!process.stdin.isTTY) die('not a terminal — re-run with --yes to confirm');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = (await rl.question(question)).trim();
+  rl.close();
+  return /^y(es)?$/i.test(answer);
 }
 
 async function cmdAdd(a) {
@@ -345,32 +356,27 @@ async function cmdSetup(a) {
   } catch (e) { die(e.message); }
 }
 
+// Full removal by default. Flags only hold things back: --keep-data preserves state.db, app
+// data, and db volumes; --keep-caddy leaves Caddy installed (just drops JustDeploy's routes).
 async function cmdUninstall(a) {
-  const purge = 'purge' in a;
-  const removeDeps = 'remove-deps' in a;
-  const yes = 'yes' in a;
+  const keepData = 'keep-data' in a;
+  const keepCaddy = 'keep-caddy' in a;
   const database = db.open();
 
   console.log('justdeploy uninstall — this will:');
-  console.log('  • stop + remove the dashboard service and drop its Caddy route');
-  console.log('  • stop + remove the backup timer');
-  console.log('  • remove the justdeploy CLI from your PATH');
-  if (purge) {
-    console.log('  • tear down EVERY app and database (processes, containers, volumes, routes)');
-    console.log(`  • delete all state and data: ${HOME}  and each ${SRV}/<app>`);
-    console.log('  • reset Caddy to an empty config and remove the JustDeploy checkout');
-  } else {
-    console.log('  • KEEP your deployed apps serving, and all data (state.db, app data, db volumes)');
-    console.log('    note: proxy apps lose their supervisor (no auto-restart) until you reinstall');
-  }
-  if (removeDeps) console.log('  • purge Caddy from the system (Docker is left in place)');
+  console.log('  • stop + remove the dashboard service and backup timer');
+  console.log('  • remove the justdeploy CLI and the checkout');
+  if (keepData) console.log('  • KEEP your data: state.db, app files, and database volumes');
+  else console.log(`  • tear down every app + database and delete all data (${HOME}, ${SRV}/<app>)`);
+  if (keepCaddy) console.log('  • KEEP Caddy installed (just drop JustDeploy’s routes)');
+  else console.log('  • remove Caddy (package + config); Docker is left in place');
   console.log('');
-  if (!yes) {
-    die('destructive — re-run to confirm:  justdeploy uninstall' +
-      (purge ? ' --purge' : '') + (removeDeps ? ' --remove-deps' : '') + ' --yes');
+
+  if (!('yes' in a) && !(await confirm('remove everything? [y/N] '))) {
+    console.log('aborted — nothing changed.');
+    return;
   }
 
-  // 1. management layer: dashboard route + service, backup timer.
   db.setSetting(database, 'dashboard_domain', '');
   db.setSetting(database, 'dashboard_port', '');
   setup.removeUnit('justdeploy-dashboard.service');
@@ -378,35 +384,24 @@ async function cmdUninstall(a) {
   setup.removeUnit('justdeploy-backup.service');
   setup.daemonReload();
 
-  // 2. apps + databases (purge only) — reuse the same teardown `rm` uses.
-  if (purge) {
-    for (const app of db.listApps(database)) {
-      try { await engine.destroy(database, app.name); console.log(`  removed app ${app.name}`); }
-      catch (e) { console.log(`  ! app ${app.name}: ${e.message}`); }
-    }
-    for (const res of db.listResources(database)) {
-      if (res.kind !== 'postgres') continue;
-      try { pg.deprovision(database, res.name); console.log(`  removed db ${res.name}`); }
-      catch (e) { console.log(`  ! db ${res.name}: ${e.message}`); }
-    }
-    await caddy.apply([], undefined); // empty Caddy (admin block only)
-  } else {
-    await caddy.applyFromDb(database); // rebuild without the dashboard route; apps stay served
+  for (const app of db.listApps(database)) {
+    try { await engine.destroy(database, app.name, { keepData }); console.log(`  removed app ${app.name}`); }
+    catch (e) { console.log(`  ! app ${app.name}: ${e.message}`); }
+  }
+  for (const res of db.listResources(database)) {
+    if (res.kind !== 'postgres') continue;
+    try { pg.deprovision(database, res.name, { keepData }); console.log(`  removed db ${res.name}`); }
+    catch (e) { console.log(`  ! db ${res.name}: ${e.message}`); }
   }
 
-  // 3. system deps (opt-in), then the CLI itself.
-  if (removeDeps) setup.removeCaddyPackage();
+  if (keepCaddy) await caddy.apply([], undefined); // drop JustDeploy routes, keep Caddy running
+  else setup.removeCaddyPackage();
+
   setup.removeCli();
+  if (!keepData) setup.removePath(HOME);
+  setup.removePath(join(dirname(fileURLToPath(import.meta.url)), '..')); // the checkout
 
-  // 4. state + checkout (purge only). Done last so earlier steps could still read them.
-  if (purge) {
-    setup.removePath(HOME);
-    setup.removePath(join(dirname(fileURLToPath(import.meta.url)), '..'));
-  }
-
-  console.log('\n' + (purge
-    ? 'JustDeploy uninstalled and purged. Nothing left behind.'
-    : 'JustDeploy uninstalled. Your apps and data were kept — reinstall to manage them again.'));
+  console.log('\nJustDeploy uninstalled' + (keepData ? ' (kept your data).' : '.'));
 }
 
 async function cmdReconcile() {
