@@ -104,7 +104,8 @@ piped/non-interactive runs need `--yes`.
 
 ```
 # register an app and deploy it in one step — the type decides everything
-justdeploy add https://github.com/you/site.git --type vite --domain gobi.design
+# --domain is inferred as <name>.<base> once a dashboard/base domain exists:
+justdeploy add https://github.com/you/site.git --type vite            # → site.<base>
 justdeploy add https://github.com/you/api.git  --type adonis --domain api.gobi.design
 
 # redeploy (pull → build → swap)

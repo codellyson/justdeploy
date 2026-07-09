@@ -383,13 +383,15 @@
       <div class="term">
         <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">deploy</span><button class="copy">copy</button></div>
 <pre><code><span class="cmt"># a Vite / React / static site — served directly by Caddy, with a TLS cert</span>
-<span class="cmd">justdeploy</span> add https://github.com/you/site.git <span class="arg">--type</span> vite <span class="arg">--domain</span> app.example.com
+<span class="cmd">justdeploy</span> add https://github.com/you/site.git <span class="arg">--type</span> vite
 
 <span class="cmt"># a long-running Node app (Adonis / Next) — proxied, zero-downtime swaps</span>
-<span class="cmd">justdeploy</span> add https://github.com/you/api.git <span class="arg">--type</span> adonis <span class="arg">--domain</span> api.example.com</code></pre>
+<span class="cmd">justdeploy</span> add https://github.com/you/api.git <span class="arg">--type</span> adonis</code></pre>
       </div>
-      <p><code>add</code> clones, builds, wires up Caddy (which fetches a Let's Encrypt cert), and starts
-      serving. Watch it and manage it:</p>
+      <p>No <code>--domain</code>? Once a dashboard (or base domain) exists, it's inferred as
+      <code>&lt;name&gt;.&lt;base&gt;</code> — e.g. <code>site.example.com</code>. Pass <code>--domain</code>
+      to override. <code>add</code> clones, builds, wires up Caddy (which fetches a Let's Encrypt cert),
+      and starts serving. Watch it and manage it:</p>
       <div class="term">
         <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">day-to-day</span><button class="copy">copy</button></div>
 <pre><code><span class="cmd">justdeploy</span> ls               <span class="cmt"># what's deployed, ports, pids</span>

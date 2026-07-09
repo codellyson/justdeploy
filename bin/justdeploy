@@ -4,7 +4,7 @@
 //   justdeploy setup [--no-docker]                          install Caddy + Docker, ready the host
 //   justdeploy doctor                                       check prerequisites (installs nothing)
 //   justdeploy uninstall [--keep-data] [--keep-caddy]       remove JustDeploy (prompts; full by default)
-//   justdeploy add <repo> --type T --domain D [--name N]   register + write config, then deploy
+//   justdeploy add <repo> --type T [--domain D] [--name N] register + deploy (domain inferred: <name>.<base>)
 //   justdeploy deploy [name]                                run the deploy loop
 //   justdeploy ls                                           list apps and their state
 //   justdeploy logs <name> [-f]                             tail an app's log
@@ -83,14 +83,24 @@ async function cmdAdd(a) {
   if (!TYPES.includes(a.type)) die(`--type must be one of: ${TYPES.join(', ')}`);
   if (!name) die('provide a repo URL or --name');
   const serve = row(a.type).serve;
-  if (serve !== 'resource' && !a.domain) die('--domain is required');
 
   const database = db.open();
   if (db.getApp(database, name) || db.getResource(database, name)) die(`"${name}" already exists — rm it first, or pick another name`);
+
+  // Infer the domain when not given: <name>.<base>, where base is an explicit `base_domain`
+  // setting or, failing that, the dashboard's own domain. So `add <repo> --type vite` just
+  // works once a dashboard exists. Resource types (postgres) need no domain.
+  let domain = a.domain;
+  if (serve !== 'resource' && !domain) {
+    const base = db.getSetting(database, 'base_domain') || db.getSetting(database, 'dashboard_domain');
+    if (base) domain = `${name.toLowerCase()}.${base}`;
+    else die('no --domain given and no base domain set — pass --domain, or install the dashboard first');
+  }
+
   // Validate the shape; the record lives in the state db (source of truth), not a yml file.
-  config.validate({ name, type: a.type, domain: a.domain, repo, release: a.release, persist: a.persist });
+  config.validate({ name, type: a.type, domain, repo, release: a.release, persist: a.persist });
   db.upsertApp(database, {
-    name, type: a.type, domain: a.domain, repo, serve,
+    name, type: a.type, domain, repo, serve,
     release_cmd: a.release ?? null, persist: a.persist ?? null, created_at: now(),
   });
 
@@ -99,7 +109,7 @@ async function cmdAdd(a) {
     db.setEnv(database, name, 'APP_KEY', randomBytes(32).toString('base64url'));
   }
 
-  console.log(`registered ${name} (${a.type}${a.domain ? ' → ' + a.domain : ''})`);
+  console.log(`registered ${name} (${a.type}${domain ? ' → ' + domain : ''})`);
 
   if (serve === 'static' || serve === 'proxy') {
     console.log('deploying...');
