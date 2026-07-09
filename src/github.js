@@ -4,7 +4,9 @@ const API = 'https://api.github.com';
 
 function headers(token) {
   return {
-    Authorization: `Bearer ${token}`,
+    // Omit auth when there's no token so public-repo reads still work (unauthenticated, rate-
+    // limited). A `Bearer null` header would otherwise 401.
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     'User-Agent': 'justdeploy',
     Accept: 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2022-11-28',

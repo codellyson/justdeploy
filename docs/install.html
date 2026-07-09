@@ -378,20 +378,21 @@
     <!-- 6 first app -->
     <section class="step reveal" id="step-firstapp">
       <div class="step-head"><span class="step-num">04</span><h2>Deploy your first app</h2></div>
-      <p>Point JustDeploy at a public git repo and tell it the type. The type decides how the app builds
-      and runs — that's the whole configuration.</p>
+      <p>Point JustDeploy at a git repo — that's it. It detects the type from the repo's
+      <code>package.json</code> and infers the domain, so a bare <code>add</code> just works:</p>
       <div class="term">
         <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">deploy</span><button class="copy">copy</button></div>
-<pre><code><span class="cmt"># a Vite / React / static site — served directly by Caddy, with a TLS cert</span>
-<span class="cmd">justdeploy</span> add https://github.com/you/site.git <span class="arg">--type</span> vite
+<pre><code><span class="cmt"># type detected (Next/Adonis/Vite/CRA/static), domain inferred as <name>.<base></span>
+<span class="cmd">justdeploy</span> add https://github.com/you/site.git
 
-<span class="cmt"># a long-running Node app (Adonis / Next) — proxied, zero-downtime swaps</span>
-<span class="cmd">justdeploy</span> add https://github.com/you/api.git <span class="arg">--type</span> adonis</code></pre>
+<span class="cmt"># …or pin either explicitly</span>
+<span class="cmd">justdeploy</span> add https://github.com/you/api.git <span class="arg">--type</span> adonis <span class="arg">--domain</span> api.example.com</code></pre>
       </div>
-      <p>No <code>--domain</code>? Once a dashboard (or base domain) exists, it's inferred as
-      <code>&lt;name&gt;.&lt;base&gt;</code> — e.g. <code>site.example.com</code>. Pass <code>--domain</code>
-      to override. <code>add</code> clones, builds, wires up Caddy (which fetches a Let's Encrypt cert),
-      and starts serving. Watch it and manage it:</p>
+      <p>Type detection reads <code>package.json</code> over the GitHub API (Next → nextjs, @adonisjs/core →
+      adonis, vite → vite, react-scripts → react, else static); the domain becomes
+      <code>&lt;name&gt;.&lt;base&gt;</code> from your dashboard/base domain. Pass <code>--type</code> or
+      <code>--domain</code> to override, or for non-GitHub repos. <code>add</code> then clones, builds,
+      wires up Caddy (which fetches a Let's Encrypt cert), and starts serving. Manage it:</p>
       <div class="term">
         <div class="term-bar"><span class="dots"><i></i><i></i><i></i></span><span class="ttl">day-to-day</span><button class="copy">copy</button></div>
 <pre><code><span class="cmd">justdeploy</span> ls               <span class="cmt"># what's deployed, ports, pids</span>

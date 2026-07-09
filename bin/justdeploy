@@ -4,7 +4,7 @@
 //   justdeploy setup [--no-docker]                          install Caddy + Docker, ready the host
 //   justdeploy doctor                                       check prerequisites (installs nothing)
 //   justdeploy uninstall [--keep-data] [--keep-caddy]       remove JustDeploy (prompts; full by default)
-//   justdeploy add <repo> --type T [--domain D] [--name N] register + deploy (domain inferred: <name>.<base>)
+//   justdeploy add <repo> [--type T] [--domain D] [--name N] register + deploy (type + domain inferred from the repo)
 //   justdeploy deploy [name]                                run the deploy loop
 //   justdeploy ls                                           list apps and their state
 //   justdeploy logs <name> [-f]                             tail an app's log
@@ -77,19 +77,38 @@ async function confirm(question) {
   return /^y(es)?$/i.test(answer);
 }
 
+// owner/repo from a GitHub URL (https or ssh form), or null for a non-GitHub repo.
+function githubFullName(repo) {
+  const m = (repo || '').match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/i);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
 async function cmdAdd(a) {
   const repo = a._[0];
   const name = a.name || (repo ? basename(repo, '.git') : null);
-  if (!TYPES.includes(a.type)) die(`--type must be one of: ${TYPES.join(', ')}`);
   if (!name) die('provide a repo URL or --name');
-  const serve = row(a.type).serve;
 
   const database = db.open();
   if (db.getApp(database, name) || db.getResource(database, name)) die(`"${name}" already exists — rm it first, or pick another name`);
 
+  // Infer the type from the repo when not given — the same package.json detection the dashboard
+  // uses (Next/Adonis/Vite/CRA/static). Reads via the GitHub API, so it needs a GitHub URL.
+  let type = a.type;
+  if (!type) {
+    const full = githubFullName(repo);
+    if (!full) die('could not infer --type (not a GitHub URL) — pass --type');
+    try {
+      const det = await github.detectType(db.getSetting(database, 'github_token') || null, full);
+      type = det.type;
+      console.log(`detected ${type} (${det.reason})`);
+    } catch (e) { die(`could not detect --type (${e.message}) — pass --type`); }
+  }
+  if (!TYPES.includes(type)) die(`--type must be one of: ${TYPES.join(', ')}`);
+  const serve = row(type).serve;
+
   // Infer the domain when not given: <name>.<base>, where base is an explicit `base_domain`
-  // setting or, failing that, the dashboard's own domain. So `add <repo> --type vite` just
-  // works once a dashboard exists. Resource types (postgres) need no domain.
+  // setting or, failing that, the dashboard's own domain. So `add <repo>` just works once a
+  // dashboard exists. Resource types (postgres) need no domain.
   let domain = a.domain;
   if (serve !== 'resource' && !domain) {
     const base = db.getSetting(database, 'base_domain') || db.getSetting(database, 'dashboard_domain');
@@ -98,18 +117,18 @@ async function cmdAdd(a) {
   }
 
   // Validate the shape; the record lives in the state db (source of truth), not a yml file.
-  config.validate({ name, type: a.type, domain, repo, release: a.release, persist: a.persist });
+  config.validate({ name, type, domain, repo, release: a.release, persist: a.persist });
   db.upsertApp(database, {
-    name, type: a.type, domain, repo, serve,
+    name, type, domain, repo, serve,
     release_cmd: a.release ?? null, persist: a.persist ?? null, created_at: now(),
   });
 
   // Type-specific auto-fill so the documented traps never happen.
-  if (a.type === 'adonis') {
+  if (type === 'adonis') {
     db.setEnv(database, name, 'APP_KEY', randomBytes(32).toString('base64url'));
   }
 
-  console.log(`registered ${name} (${a.type}${domain ? ' → ' + domain : ''})`);
+  console.log(`registered ${name} (${type}${domain ? ' → ' + domain : ''})`);
 
   if (serve === 'static' || serve === 'proxy') {
     console.log('deploying...');
