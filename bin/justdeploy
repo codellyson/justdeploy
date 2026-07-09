@@ -187,12 +187,35 @@ function cmdLogs(a) {
   spawn('tail', args, { stdio: 'inherit' });
 }
 
+// Parse a .env block into KEY=VAL strings: skip blanks/# comments, drop an `export ` prefix,
+// strip matching surrounding quotes from the value.
+function parseEnvFile(text) {
+  const out = [];
+  for (let line of text.split(/\r?\n/)) {
+    line = line.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (line.startsWith('export ')) line = line.slice(7).trim();
+    const eq = line.indexOf('=');
+    if (eq === -1) continue;
+    const k = line.slice(0, eq).trim();
+    let v = line.slice(eq + 1).trim();
+    if (v.length >= 2 && ((v[0] === '"' && v.at(-1) === '"') || (v[0] === "'" && v.at(-1) === "'"))) v = v.slice(1, -1);
+    if (k) out.push(`${k}=${v}`);
+  }
+  return out;
+}
+
 function cmdEnv(a) {
   const name = a._[0];
-  if (!name) die('usage: justdeploy env <name> [KEY=VAL ...]');
+  if (!name) die('usage: justdeploy env <name> [KEY=VAL ...] [--file .env]');
   const database = db.open();
   if (!db.getApp(database, name)) die(`no such app: ${name}`);
+  // --file loads a whole .env at once; positional KEY=VAL still work and stack on top.
   const sets = a._.slice(1);
+  if (a.file) {
+    if (!existsSync(a.file)) die(`no such file: ${a.file}`);
+    sets.push(...parseEnvFile(readFileSync(a.file, 'utf8')));
+  }
   if (!sets.length) {
     const env = db.getEnv(database, name);
     for (const [k, v] of Object.entries(env)) console.log(`${k}=${v}`);

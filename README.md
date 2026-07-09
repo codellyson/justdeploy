@@ -114,7 +114,8 @@ justdeploy deploy                 # all deployable apps
 
 justdeploy ls                     # what's deployed, ports, pids
 justdeploy logs api -f            # tail an app's log
-justdeploy env api DATABASE_URL=postgres://...   # set env, then redeploy
+justdeploy env api DATABASE_URL=postgres://...   # set one or more KEY=VAL, then redeploy
+justdeploy env api --file .env                    # load a whole .env at once
 justdeploy pg api                 # provision a Postgres container, prints conn string
 justdeploy rollback api           # redeploy the previous successful commit
 justdeploy webhook                # enable git-push auto-deploy, print the setup to paste into GitHub

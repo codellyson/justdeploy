@@ -251,12 +251,43 @@ function EnvRow({ k, val, onKey, onVal, onDel }) {
   );
 }
 
+// Parse a pasted .env block into [key, value] pairs. Skips blanks/# comments, tolerates an
+// `export ` prefix, splits on the first `=`, and strips matching surrounding quotes.
+function parseEnvBlock(text) {
+  const out = [];
+  for (let line of text.split(/\r?\n/)) {
+    line = line.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (line.startsWith('export ')) line = line.slice(7).trim();
+    const eq = line.indexOf('=');
+    if (eq === -1) continue;
+    const k = line.slice(0, eq).trim();
+    let v = line.slice(eq + 1).trim();
+    if (v.length >= 2 && ((v[0] === '"' && v.at(-1) === '"') || (v[0] === "'" && v.at(-1) === "'"))) v = v.slice(1, -1);
+    if (k) out.push([k, v]);
+  }
+  return out;
+}
+
 function EnvTab({ name }) {
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [pasting, setPasting] = useState(false);
+  const [pasteText, setPasteText] = useState('');
   useEffect(() => { api.getEnv(name).then(({ env }) => setRows(Object.entries(env).map(([k, v]) => ({ k, v })))); }, [name]);
   if (!rows) return <Spinner className="mx-auto my-10 h-5 w-5" />;
   const upd = (i, key) => (e) => setRows((r) => r.map((row, j) => (j === i ? { ...row, [key]: e.target.value } : row)));
+  const applyPaste = () => {
+    const parsed = parseEnvBlock(pasteText);
+    if (!parsed.length) { toast('no KEY=VALUE lines found', 'error'); return; }
+    setRows((r) => {
+      const merged = new Map(r.filter((x) => x.k.trim()).map((x) => [x.k.trim(), x.v]));
+      for (const [k, v] of parsed) merged.set(k, v); // paste overrides existing keys
+      return [...merged].map(([k, v]) => ({ k, v }));
+    });
+    setPasteText(''); setPasting(false);
+    toast(`added ${parsed.length} variable${parsed.length > 1 ? 's' : ''} — review, then Save`, 'success');
+  };
   const save = async () => {
     setBusy(true);
     const env = {}; rows.forEach(({ k, v }) => { if (k.trim()) env[k.trim()] = v; });
@@ -270,8 +301,31 @@ function EnvTab({ name }) {
           <h3 className="text-base font-semibold">Environment variables</h3>
           <p className="mt-0.5 text-sm text-muted">Injected at deploy time. Redeploy to apply changes.</p>
         </div>
-        <button onClick={() => setRows((r) => [...r, { k: '', v: '' }])} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-sm font-medium transition hover:border-muted/50"><Icon.Plus className="h-4 w-4" /> Add variable</button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setPasting((p) => !p)} className={cx('flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition', pasting ? 'border-accent text-accent' : 'border-border bg-bg-secondary hover:border-muted/50')}><Icon.FileCode className="h-4 w-4" /> Paste .env</button>
+          <button onClick={() => setRows((r) => [...r, { k: '', v: '' }])} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-sm font-medium transition hover:border-muted/50"><Icon.Plus className="h-4 w-4" /> Add variable</button>
+        </div>
       </div>
+      {pasting && (
+        <div className="surface mb-3 p-3">
+          <textarea
+            autoFocus
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            rows={7}
+            spellCheck={false}
+            placeholder={'Paste a .env block, e.g.\nDATABASE_URL=postgres://…\nAPP_KEY=…\nNODE_ENV=production'}
+            className="field w-full resize-y py-2 font-mono text-sm"
+          />
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-xs text-muted">Existing keys are overwritten; the rest are added. Nothing saves until you hit Save.</span>
+            <div className="flex gap-2">
+              <button onClick={() => { setPasteText(''); setPasting(false); }} className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted transition hover:text-primary">Cancel</button>
+              <button onClick={applyPaste} className="rounded-lg bg-accent px-3.5 py-1.5 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]">Add variables</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="surface divide-y divide-border overflow-hidden p-0">
         {rows.length === 0 && <p className="px-4 py-6 text-sm text-muted">No variables yet.</p>}
         {rows.map((row, i) => <EnvRow key={i} k={row.k} val={row.v} onKey={upd(i, 'k')} onVal={upd(i, 'v')} onDel={() => setRows((r) => r.filter((_, j) => j !== i))} />)}

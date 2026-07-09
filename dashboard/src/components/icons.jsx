@@ -39,6 +39,7 @@ export const Icon = {
   Layers: LuLayers,
   Settings: LuSettings2,
   Search: LuSearch,
+  FileCode: LuFileCode2,
   Github: SiGithub,
 };
 
