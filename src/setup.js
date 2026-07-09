@@ -43,7 +43,13 @@ export function caddyRunning() { return quiet('systemctl is-active caddy') === '
 
 export async function caddyAdminOk() {
   try {
-    const res = await fetch(`${CADDY_ADMIN}/config/`, { signal: AbortSignal.timeout(2500) });
+    const res = await fetch(`${CADDY_ADMIN}/config/`, {
+      // Caddy's admin API enforces an origin check and 403s browser-style requests with an
+      // empty Origin — and Node's fetch sends `Sec-Fetch-Mode: cors`, so it trips it. Present
+      // the admin address as the origin, exactly as caddy.js does for its mutating requests.
+      headers: { Origin: CADDY_ADMIN },
+      signal: AbortSignal.timeout(2500),
+    });
     return res.ok;
   } catch { return false; }
 }
@@ -69,33 +75,57 @@ export function startCaddy() {
 // --- Docker --------------------------------------------------------------
 export function dockerInstalled() { return have('docker'); }
 
+// Daemon actually reachable — the binary existing says nothing about whether dockerd is up.
+export function dockerRunning() {
+  try { execSync('docker info', { stdio: 'ignore' }); return true; } catch { return false; }
+}
+
 export function installDocker() {
   step('installing Docker Engine (get.docker.com)…');
   sh('curl -fsSL https://get.docker.com | sh');
-  sh('systemctl enable --now docker');
+  // get.docker.com already enables + starts dockerd. We deliberately do NOT race it with our
+  // own `systemctl start` — two rapid starts trip systemd's restart limiter ("start request
+  // repeated too quickly"). ensureDockerRunning() below settles it if anything went sideways.
+}
+
+// Make sure dockerd is up, clearing systemd's rapid-restart limiter if a racing start tripped
+// it during install. Returns true once the daemon answers. Safe to call when already running.
+export async function ensureDockerRunning() {
+  if (dockerRunning()) return true;
+  try { execSync('systemctl reset-failed docker', { stdio: 'ignore' }); } catch { /* ignore */ }
+  try { execSync('systemctl enable --now docker', { stdio: 'ignore' }); } catch { /* ignore */ }
+  for (let i = 0; !dockerRunning() && i < 6; i++) await new Promise((r) => setTimeout(r, 1000));
+  return dockerRunning();
 }
 
 // --- report --------------------------------------------------------------
 // Gather current state without changing anything. Used by both `setup` (before/after) and
 // the `doctor` dry-run.
 export async function inspect() {
+  const dockerBin = dockerInstalled();
   return {
     node: nodeOk(),
     nodeVersion: process.versions.node,
     caddy: caddyInstalled(),
     caddyRunning: caddyRunning(),
     caddyAdmin: await caddyAdminOk(),
-    docker: dockerInstalled(),
+    dockerInstalled: dockerBin,
+    docker: dockerBin && dockerRunning(), // usable = binary present AND daemon up
   };
 }
 
 export function printReport(s) {
+  const dockerLine = s.docker
+    ? 'Docker'
+    : s.dockerInstalled
+      ? 'Docker installed but daemon not running (try: systemctl start docker)'
+      : 'Docker (optional — needed only for Postgres)';
   console.log('');
   console.log(`  ${mark(s.node)} Node ${s.nodeVersion} ${s.node ? '' : '(need ≥ 22.5)'}`);
   console.log(`  ${mark(s.caddy)} Caddy installed`);
   console.log(`  ${mark(s.caddyRunning)} Caddy service running`);
   console.log(`  ${mark(s.caddyAdmin)} Caddy admin API (${CADDY_ADMIN})`);
-  console.log(`  ${mark(s.docker)} Docker ${s.docker ? '' : '(optional — needed only for Postgres)'}`);
+  console.log(`  ${mark(s.docker)} ${dockerLine}`);
   console.log('');
 }
 
@@ -126,6 +156,9 @@ export function removeCaddyPackage() {
   try { execSync('systemctl disable --now caddy', { stdio: 'ignore' }); } catch { /* ignore */ }
   try { execSync('apt-get purge -y caddy', { stdio: 'inherit' }); } catch { /* ignore */ }
   for (const f of [CADDY_LIST, CADDY_KEYRING]) if (existsSync(f)) { try { rmSync(f); } catch { /* ignore */ } }
+  // apt purge leaves /var/lib/caddy, whose autosave.json makes a reinstalled Caddy resume the
+  // old routes (`caddy run --resume`). Clear it so a fresh install starts from a clean config.
+  removePath('/var/lib/caddy');
 }
 
 export function removePath(p) {
@@ -175,6 +208,11 @@ export async function run(opts = {}) {
   if (wantDocker) {
     if (!dockerInstalled()) installDocker();
     else step('Docker already installed — skipping.');
+    step('ensuring the Docker daemon is running…');
+    if (!(await ensureDockerRunning())) {
+      console.log('\x1b[33m!\x1b[0m Docker is installed but the daemon would not start. ' +
+        'Check: journalctl -xeu docker.service');
+    }
   } else {
     step('skipping Docker (--no-docker); databases will be unavailable.');
   }
