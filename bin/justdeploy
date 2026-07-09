@@ -39,6 +39,12 @@ import * as config from '../src/config.js';
 
 const now = () => new Date().toISOString();
 
+// How systemd units should invoke the CLI. Hardcoding /usr/local/bin/justdeploy breaks when
+// `npm link` installs the shim elsewhere (npm's global prefix is /usr/bin on some boxes) —
+// systemd then fails with 203/EXEC. Point straight at this script with the running node, an
+// absolute path that doesn't depend on where the PATH shim landed.
+const CLI_EXEC = `${process.execPath} ${fileURLToPath(import.meta.url)}`;
+
 function flags(argv) {
   const out = { _: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -255,7 +261,7 @@ function cmdWebhook(a) {
 function installBackupTimer(keep, oncalendar) {
   const cal = oncalendar && oncalendar !== 'undefined' ? oncalendar : 'daily';
   writeFileSync('/etc/systemd/system/justdeploy-backup.service',
-    `[Unit]\nDescription=JustDeploy backup\n\n[Service]\nType=oneshot\nExecStart=/usr/local/bin/justdeploy backup --keep ${keep}\n`);
+    `[Unit]\nDescription=JustDeploy backup\n\n[Service]\nType=oneshot\nExecStart=${CLI_EXEC} backup --keep ${keep}\n`);
   writeFileSync('/etc/systemd/system/justdeploy-backup.timer',
     `[Unit]\nDescription=JustDeploy backup timer\n\n[Timer]\nOnCalendar=${cal}\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n`);
   execSync('systemctl daemon-reload');
@@ -418,7 +424,8 @@ After=network.target caddy.service
 [Service]
 Type=simple
 Environment=PORT=${port}
-ExecStart=/usr/local/bin/justdeploy dashboard serve
+Environment=NODE_OPTIONS=--disable-warning=ExperimentalWarning
+ExecStart=${CLI_EXEC} dashboard serve
 Restart=always
 User=root
 

@@ -4,11 +4,25 @@
 // and only does work that's missing, so `setup` is safe to re-run. On anything that isn't
 // apt-based it prints the manual steps and bails rather than guessing.
 import { execSync } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { CADDY_ADMIN } from './paths.js';
 
 const CADDY_KEYRING = '/usr/share/keyrings/caddy-stable-archive-keyring.gpg';
 const CADDY_LIST = '/etc/apt/sources.list.d/caddy-stable.list';
+
+// JustDeploy drives Caddy entirely through its admin API and serves app files from root-owned
+// /srv dirs — so Caddy must run as root, and it must `--resume` its last admin-applied config
+// on restart (not the default Caddyfile), or a reboot drops every app route. Stock apt Caddy
+// runs as the `caddy` user against /etc/caddy/Caddyfile; this drop-in fixes both.
+const CADDY_DROPIN_DIR = '/etc/systemd/system/caddy.service.d';
+const CADDY_DROPIN = `${CADDY_DROPIN_DIR}/override.conf`;
+const CADDY_DROPIN_CONTENT = `[Service]
+User=root
+Group=root
+ExecStart=
+ExecStart=/usr/bin/caddy run --resume
+ExecReload=
+`;
 
 // --- small shell helpers -------------------------------------------------
 export function have(cmd) {
@@ -70,6 +84,18 @@ export function installCaddy() {
 export function startCaddy() {
   step('enabling + starting the Caddy service…');
   sh('systemctl enable --now caddy');
+}
+
+// Install the root + --resume drop-in JustDeploy needs. Idempotent: only rewrites and restarts
+// when the content actually changes, so re-running setup doesn't bounce a healthy Caddy.
+export function configureCaddy() {
+  const current = existsSync(CADDY_DROPIN) ? readFileSync(CADDY_DROPIN, 'utf8') : '';
+  if (current === CADDY_DROPIN_CONTENT) { step('Caddy already configured for JustDeploy (root + --resume).'); return; }
+  step('configuring Caddy to run as root with --resume…');
+  mkdirSync(CADDY_DROPIN_DIR, { recursive: true });
+  writeFileSync(CADDY_DROPIN, CADDY_DROPIN_CONTENT);
+  try { execSync('systemctl daemon-reload', { stdio: 'ignore' }); } catch { /* ignore */ }
+  try { execSync('systemctl restart caddy', { stdio: 'ignore' }); } catch { /* startCaddy handles it */ }
 }
 
 // --- Docker --------------------------------------------------------------
@@ -156,9 +182,13 @@ export function removeCaddyPackage() {
   try { execSync('systemctl disable --now caddy', { stdio: 'ignore' }); } catch { /* ignore */ }
   try { execSync('apt-get purge -y caddy', { stdio: 'inherit' }); } catch { /* ignore */ }
   for (const f of [CADDY_LIST, CADDY_KEYRING]) if (existsSync(f)) { try { rmSync(f); } catch { /* ignore */ } }
-  // apt purge leaves /var/lib/caddy, whose autosave.json makes a reinstalled Caddy resume the
-  // old routes (`caddy run --resume`). Clear it so a fresh install starts from a clean config.
+  // apt purge leaves our systemd drop-in and Caddy's resumable autosave behind, so a reinstalled
+  // Caddy would `--resume` the old routes. Clear the drop-in and every autosave location — root's
+  // config dir (our drop-in runs Caddy as root) and the default caddy-user dir.
+  removePath(CADDY_DROPIN_DIR);
+  removePath('/root/.config/caddy');
   removePath('/var/lib/caddy');
+  try { execSync('systemctl daemon-reload', { stdio: 'ignore' }); } catch { /* ignore */ }
 }
 
 export function removePath(p) {
@@ -201,6 +231,8 @@ export async function run(opts = {}) {
 
   if (!caddyInstalled()) installCaddy();
   else step('Caddy already installed — skipping.');
+
+  configureCaddy(); // root + --resume drop-in (restarts Caddy only if it changed)
 
   if (!caddyRunning()) startCaddy();
   else step('Caddy already running.');
