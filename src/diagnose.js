@@ -13,6 +13,20 @@ const RULES = [
     hint: 'Add a deploy key / access token on the server, or make the repo public. JustDeploy has no git-credential flow yet.',
   },
   {
+    match: /unresolved env reference (\$\{\{[^}]+\}\}|\S+)/i,
+    reason: 'An env value references something that does not exist',
+    hint: (text) => {
+      const m = text.match(/unresolved env reference \S+ in \S+: (.+)/);
+      return m ? m[1].replace(/\.$/, '') + '. Fix the `${{Source.KEY}}` reference in this app\'s env (`justdeploy ls` shows resource names), then redeploy.'
+               : 'One of this app\'s env values has a `${{Source.KEY}}` reference that could not be resolved. Check the source name against `justdeploy ls`.';
+    },
+  },
+  {
+    match: /circular env reference at (\S+)/i,
+    reason: 'Two env vars reference each other in a loop',
+    hint: 'Break the cycle — an env value points back at itself through another variable. Give one of them a literal value.',
+  },
+  {
     match: /Missing environment variable "([^"]+)"/gi,
     reason: 'The app crashed on boot: required environment variables are missing',
     hint: (text) => {

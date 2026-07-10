@@ -144,6 +144,28 @@ justdeploy restore <file> --yes   # restore state.db + data dirs + postgres from
 
 The archive is `chmod 600` — it contains secrets (env vars, admin hash, webhook secret).
 
+### Referencing a database (or another app) in env
+
+Env values can pull fields from a provisioned resource or another app at deploy time, so you
+never paste — or drift on — a password. The reference is stored verbatim and resolved on every
+deploy (rotate a db password and the next deploy picks it up automatically):
+
+```
+# a postgres resource named `gobi-db` (the name shown in `justdeploy ls`)
+justdeploy env api DATABASE_URL='${{gobi-db.DATABASE_URL}}'
+justdeploy env api DB_HOST='${{gobi-db.PGHOST}}' DB_PORT='${{gobi-db.PGPORT}}' \
+  DB_USER='${{gobi-db.PGUSER}}' DB_PASSWORD='${{gobi-db.PGPASSWORD}}' DB_DATABASE='${{gobi-db.PGDATABASE}}'
+
+# another app's env var, or this app's own (no dot)
+justdeploy env api FRONTEND='${{web.PUBLIC_URL}}'
+justdeploy env api ORIGIN='https://${{DOMAIN}}'
+```
+
+Postgres fields: `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGSSLMODE`,
+`DATABASE_URL` (private), `DATABASE_PUBLIC_URL`. A reference that doesn't resolve fails the
+deploy with a plain-English reason (naming the sources that *do* exist) — it never ships a
+literal `${{…}}` to your app. Quote the value in the shell so it doesn't expand `${…}` itself.
+
 ### Database-backed apps (migrations + persistence)
 
 Two optional per-app knobs, set at `add`, via `justdeploy set`, or in the dashboard Config panel:

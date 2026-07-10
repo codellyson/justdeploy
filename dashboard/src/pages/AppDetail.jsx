@@ -299,7 +299,7 @@ function EnvTab({ name }) {
       <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-base font-semibold">Environment variables</h3>
-          <p className="mt-0.5 text-sm text-muted">Injected at deploy time. Redeploy to apply changes.</p>
+          <p className="mt-0.5 text-sm text-muted">Injected at deploy time. Redeploy to apply changes. Reference a database or another app with <code className="rounded bg-bg-secondary px-1 font-mono text-[0.75rem] text-accent">{'${{db-name.DATABASE_URL}}'}</code>.</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setPasting((p) => !p)} className={cx('flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition', pasting ? 'border-accent text-accent' : 'border-border bg-bg-secondary hover:border-muted/50')}><Icon.FileCode className="h-4 w-4" /> Paste .env</button>

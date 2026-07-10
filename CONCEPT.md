@@ -168,6 +168,27 @@ superuser stays internal. **TLS** is on (self-signed cert, `sslmode=require`). O
 expose publicly (`-p 0.0.0.0:<port>`), gated by a source-**IP allowlist** enforced in the
 `DOCKER-USER` iptables chain — because Docker's port publishing bypasses `ufw`.
 
+### Referencing a resource in env (`${{...}}`)
+
+Rather than pasting a connection string (which then drifts when the password rotates), an env
+value can *reference* a provisioned resource or another app, resolved at deploy time:
+
+```
+DATABASE_URL = ${{gobi-db.DATABASE_URL}}     # a field of the postgres resource `gobi-db`
+DB_HOST      = ${{gobi-db.PGHOST}}
+FRONTEND     = ${{web.PUBLIC_URL}}           # another app's env var
+ORIGIN       = https://${{DOMAIN}}           # this app's own var (no dot)
+```
+
+The reference is stored verbatim in `state.db` and expanded on every deploy (build, release,
+and run all get the resolved values), so rotating a db password propagates without re-editing
+each consumer. Postgres exposes `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE/PGSSLMODE`,
+`DATABASE_URL` (private) and `DATABASE_PUBLIC_URL`. This is deliberately the same mental model
+as Railway's `${{Service.VAR}}` — but the source is a JustDeploy resource/app **name** (what
+`ls` shows), not a cloud service. An unresolvable reference is a hard deploy failure with a
+plain-English reason, so a literal `${{…}}` never reaches the app (the exact trap that once
+shipped `${{Postgres.PGHOST}}` to an Adonis boot). Lives in `src/envref.js`.
+
 ### SQLite (not a deploy type)
 
 There is no `sqlite` app type — SQLite isn't a service to deploy. If your app *uses* a SQLite

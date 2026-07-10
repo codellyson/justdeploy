@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, rmSync, symlinkSync, readFileSync, writeFileSync, readlinkSync, readdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { row, autoEnv } from './table.js';
+import { resolveEnv } from './envref.js';
 import { repoDir, dataDir, SRV, logFile, releasesDir, releaseDir, currentLink } from './paths.js';
 import * as db from './db.js';
 import * as caddy from './caddy.js';
@@ -18,6 +19,11 @@ import { run, capture } from './sh.js';
 
 const now = () => new Date().toISOString();
 const KEEP_RELEASES = 5; // besides the current one
+
+// The env injected into build/release/run: the app's stored vars + the type's auto vars (PORT,
+// etc.), with any `${{Source.KEY}}` references expanded against resources/other apps (see envref).
+const appEnv = (database, name, type, port) =>
+  resolveEnv(database, name, { ...db.getEnv(database, name), ...autoEnv(type, port) });
 
 // --- release bookkeeping ---------------------------------------------------
 function setCurrent(name, sha) {
@@ -84,7 +90,7 @@ async function buildRelease(database, name, type, sha) {
   // Build with the app's env injected — some builds validate/need it (Adonis `node ace build`
   // boots the app; Vite/Next inline VITE_/NEXT_PUBLIC_ vars at build time).
   const app = db.getApp(database, name);
-  const buildEnv = { ...db.getEnv(database, name), ...autoEnv(type, app.live_port || 4000) };
+  const buildEnv = appEnv(database, name, type, app.live_port || 4000);
   if (r.build) await run(name, rel, r.build, buildEnv);
   if (r.postBuild === 'next-standalone-copy') {
     // Standalone mode does not copy static assets or public/ — the classic broken-CSS trap.
@@ -115,7 +121,7 @@ function setupPersistence(name, type, sha, persist) {
 async function runRelease(database, name, type, sha) {
   const app = db.getApp(database, name);
   if (!app.release_cmd) return;
-  const env = { ...db.getEnv(database, name), ...autoEnv(type, app.live_port || 4000) };
+  const env = appEnv(database, name, type, app.live_port || 4000);
   await run(name, runDir(name, type, sha), app.release_cmd, env);
 }
 
@@ -191,7 +197,7 @@ async function swap(database, app, sha) {
   const port = db.allocatePort(database);
   db.setPorts(database, app.name, { live: app.live_port, pending: port, pid: app.live_pid });
 
-  const env = { ...db.getEnv(database, app.name), ...autoEnv(app.type, port) };
+  const env = appEnv(database, app.name, app.type, port);
   const cwd = runDir(app.name, app.type, sha);
   const newPid = proc.start(app.name, { cwd, argv: r.run, env });
 
@@ -242,7 +248,7 @@ export async function restart(database, name) {
   const app = db.getApp(database, name);
   if (!app || app.serve !== 'proxy' || !app.live_port) return false;
   const r = row(app.type);
-  const env = { ...db.getEnv(database, name), ...autoEnv(app.type, app.live_port) };
+  const env = appEnv(database, name, app.type, app.live_port);
   const cwd = runDir(name, app.type); // current release (or repo/ pre-migration)
   const pid = proc.start(name, { cwd, argv: r.run, env });
   const healthy = await proc.healthCheck(app.live_port, { path: app.health_path, timeout: app.health_timeout });
