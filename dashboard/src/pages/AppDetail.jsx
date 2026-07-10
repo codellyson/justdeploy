@@ -535,7 +535,7 @@ function EnvTab({ name }) {
   };
 
   return (
-    <div className="max-w-3xl">
+    <div>
       <div className="mb-3.5 flex flex-wrap items-start justify-between gap-2">
         <div>
           <h3 className="text-base font-semibold">Environment variables</h3>
@@ -596,7 +596,7 @@ function DeploysTab({ name, app, onRollback }) {
     : items.find((d) => d.status === 'success'))?.id;
 
   return (
-    <div className="max-w-4xl">
+    <div>
       <h3 className="mb-1 text-base font-semibold">Deployments</h3>
       <p className="mb-3.5 text-sm text-muted">Roll back to any kept build instantly — no rebuild.</p>
       <div className="surface divide-y divide-border overflow-hidden p-0">
@@ -641,7 +641,7 @@ function ConfigTab({ app, onDelete }) {
     catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
   };
   return (
-    <div className="flex max-w-2xl flex-col gap-4">
+    <div className="flex flex-col gap-4">
       <div className="surface flex flex-col gap-4 p-5">
         <div>
           <h3 className="text-base font-semibold">Build & release</h3>
