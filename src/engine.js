@@ -81,14 +81,17 @@ async function buildRelease(database, name, type, sha) {
   await run(name, repoDir(name), `git archive ${sha} | tar -x -C ${rel}`);
 
   const r = row(type);
-  if (r.build) await run(name, rel, r.build);
+  // Build with the app's env injected — some builds validate/need it (Adonis `node ace build`
+  // boots the app; Vite/Next inline VITE_/NEXT_PUBLIC_ vars at build time).
+  const app = db.getApp(database, name);
+  const buildEnv = { ...db.getEnv(database, name), ...autoEnv(type, app.live_port || 4000) };
+  if (r.build) await run(name, rel, r.build, buildEnv);
   if (r.postBuild === 'next-standalone-copy') {
     // Standalone mode does not copy static assets or public/ — the classic broken-CSS trap.
     await run(name, rel, 'cp -r .next/static .next/standalone/.next/static');
     await run(name, rel, 'cp -r public .next/standalone/public 2>/dev/null || true');
   }
-  setupPersistence(name, type, sha, db.getApp(database, name).persist); // stable data dirs before migrations
-  await runRelease(database, name, type, sha);                           // migrations etc.
+  setupPersistence(name, type, sha, app.persist); // stable data dirs before the app runs
   writeFileSync(marker, sha);
   return rel;
 }
@@ -128,6 +131,9 @@ export async function deploy(database, name, opts = {}) {
     const authEnv = github.gitAuthEnv(db.getSetting(database, 'github_token'), app.repo);
     sha = await fetchSha(name, app.repo, opts.sha, authEnv);
     await buildRelease(database, name, app.type, sha);
+    // Run the release command (e.g. migrations) on EVERY deploy — not just fresh builds. It's
+    // idempotent, and a cached build must still migrate when env/db/release-cmd changed.
+    await runRelease(database, name, app.type, sha);
 
     if (app.serve === 'static') {
       setCurrent(name, sha);
