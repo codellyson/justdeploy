@@ -14,6 +14,7 @@ import * as firewall from './firewall.js';
 import * as auth from './auth.js';
 import * as github from './github.js';
 import { TABLE, TYPES, row } from './table.js';
+import { PG_REF_FIELDS } from './envref.js';
 import { logFile } from './paths.js';
 
 // The built Vite/React dashboard (dashboard/dist). Build it with `justdeploy dashboard build`.
@@ -398,7 +399,7 @@ async function api(database, req, res, path) {
   }
 
   // /api/apps/:name/...
-  const m = path.match(/^\/api\/apps\/([a-z0-9-]+)(\/(deploy|logs|env|config|stream|rollback|deploys))?$/);
+  const m = path.match(/^\/api\/apps\/([a-z0-9-]+)(\/(deploy|logs|env|refs|config|stream|rollback|deploys))?$/);
   if (m) {
     const name = m[1], sub = m[3];
     if (!db.getApp(database, name)) return send(res, 404, { error: 'no such app' });
@@ -446,6 +447,20 @@ async function api(database, req, res, path) {
       const { env } = await body(req);
       for (const [k, v] of Object.entries(env || {})) db.setEnv(database, name, k, String(v));
       return send(res, 200, { ok: true });
+    }
+    // What this app's env can reference: every postgres resource (with its fields) and every
+    // other app (with its var *names* — never values). Powers the `${{ }}` autocomplete.
+    if (sub === 'refs' && req.method === 'GET') {
+      const sources = [];
+      for (const r of db.listResources(database)) {
+        if (r.kind === 'postgres') sources.push({ name: r.name, kind: 'postgres', fields: PG_REF_FIELDS });
+      }
+      for (const a of db.listApps(database)) {
+        if (a.name === name) continue;
+        const keys = Object.keys(db.getEnv(database, a.name));
+        if (keys.length) sources.push({ name: a.name, kind: 'app', fields: keys });
+      }
+      return send(res, 200, { sources });
     }
   }
 

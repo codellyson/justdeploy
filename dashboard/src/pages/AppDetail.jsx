@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { useVersion, invalidate } from '../lib/store';
@@ -238,21 +238,43 @@ function LogsTab({ name }) {
   );
 }
 
-function EnvRow({ k, val, onKey, onVal, onDel }) {
-  const [show, setShow] = useState(false);
+// ---- env references ($ {{ source.field }}) ------------------------------------------------
+const REF_RE = /\$\{\{\s*[\w-]+(?:\.[\w-]+)?\s*\}\}/g;
+const hasRef = (v) => /\$\{\{\s*[\w-]+(?:\.[\w-]+)?\s*\}\}/.test(v);
+// Split a value into literal + reference segments, in order, for chip rendering.
+function splitRefs(value) {
+  const out = []; let last = 0;
+  for (const m of value.matchAll(REF_RE)) {
+    if (m.index > last) out.push({ ref: false, text: value.slice(last, m.index) });
+    out.push({ ref: true, text: m[0] });
+    last = m.index + m[0].length;
+  }
+  if (last < value.length) out.push({ ref: false, text: value.slice(last) });
+  return out;
+}
+// The token being typed at the caret, if the caret sits inside an unclosed `${{ … }}`.
+function activeToken(text, caret) {
+  const before = text.slice(0, caret);
+  const open = before.lastIndexOf('${{');
+  if (open === -1 || before.slice(open + 3).includes('}}')) return null;
+  return { open, query: before.slice(open + 3).trim() };
+}
+
+// A rendered reference, e.g. ${{gobi-db.DATABASE_URL}} → a pill with the source + field.
+function RefChip({ token }) {
+  const inner = token.replace(/^\$\{\{\s*|\s*\}\}$/g, '');
+  const [source, field] = inner.split('.');
   return (
-    <div className="flex items-center gap-2 px-4 py-2.5 transition hover:surface-2">
-      <input value={k} onChange={onKey} placeholder="KEY" className="field w-2/5 py-1.5 font-mono text-sm" />
-      <input value={val} onChange={onVal} type={show ? 'text' : 'password'} placeholder="value" className="field flex-1 py-1.5 font-mono text-sm" />
-      <button onClick={() => setShow((s) => !s)} title="Reveal" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted transition hover:text-primary">{show ? <Icon.EyeOff className="h-4 w-4" /> : <Icon.Eye className="h-4 w-4" />}</button>
-      <button onClick={() => { navigator.clipboard?.writeText(val); toast('copied', 'success'); }} title="Copy" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted transition hover:text-primary"><Icon.Copy className="h-4 w-4" /></button>
-      <button onClick={onDel} title="Remove" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted transition hover:text-danger"><Icon.X className="h-4 w-4" /></button>
-    </div>
+    <span className="inline-flex items-center gap-1 rounded-md border border-accent/40 bg-accent/[0.12] px-1.5 py-0.5 align-middle font-mono text-[0.72rem] leading-none">
+      <Icon.Link className="h-3 w-3 text-accent" />
+      <span className="text-secondary">{source}</span>
+      {field && <span className="text-accent">.{field}</span>}
+    </span>
   );
 }
 
-// Parse a pasted .env block into [key, value] pairs. Skips blanks/# comments, tolerates an
-// `export ` prefix, splits on the first `=`, and strips matching surrounding quotes.
+// Parse a .env block into [key, value] pairs. Skips blanks/# comments, tolerates an `export`
+// prefix, splits on the first `=`, and strips matching surrounding quotes.
 function parseEnvBlock(text) {
   const out = [];
   for (let line of text.split(/\r?\n/)) {
@@ -268,72 +290,209 @@ function parseEnvBlock(text) {
   }
   return out;
 }
+const serializeEnv = (rows) => rows.filter((r) => r.k.trim()).map(({ k, v }) => `${k.trim()}=${v}`).join('\n');
+
+// A value cell with masking, reference chips, and `${{`-triggered autocomplete over the catalog.
+function ValueField({ value, onChange, catalog }) {
+  const inputRef = useRef(null);
+  const [editing, setEditing] = useState(!value);
+  const [reveal, setReveal] = useState(false);
+  const [caret, setCaret] = useState(value.length);
+  const [hi, setHi] = useState(0);
+  const [dismissed, setDismissed] = useState(null); // query the user Escaped out of
+  const pend = useRef(null); // caret position to restore after an insert
+
+  const tok = editing ? activeToken(value, caret) : null;
+  const sugs = useMemo(() => {
+    if (!tok) return [];
+    const q = tok.query.toLowerCase();
+    return catalog.filter((c) => c.key.toLowerCase().includes(q)).slice(0, 8);
+  }, [tok?.query, catalog, editing]);
+  const open = !!tok && tok.query !== dismissed && sugs.length > 0;
+
+  useEffect(() => { setHi(0); }, [tok?.query]);
+  useEffect(() => {
+    if (pend.current != null && inputRef.current) {
+      inputRef.current.setSelectionRange(pend.current, pend.current);
+      setCaret(pend.current); pend.current = null;
+    }
+  });
+
+  const sync = (e) => { onChange(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); };
+  const moveCaret = (e) => setCaret(e.target.selectionStart ?? 0);
+  const pick = (c) => {
+    const t = activeToken(value, caret); if (!t) return;
+    const insert = `\${{${c.source}${c.field ? '.' + c.field : ''}}}`;
+    onChange(value.slice(0, t.open) + insert + value.slice(caret));
+    pend.current = t.open + insert.length;
+    inputRef.current?.focus();
+  };
+  const onKeyDown = (e) => {
+    if (!open) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHi((h) => (h + 1) % sugs.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((h) => (h - 1 + sugs.length) % sugs.length); }
+    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(sugs[hi]); }
+    else if (e.key === 'Escape') { e.preventDefault(); setDismissed(tok.query); }
+  };
+
+  if (editing) {
+    return (
+      <div className="relative flex-1">
+        <input
+          ref={inputRef}
+          autoFocus
+          value={value}
+          spellCheck={false}
+          onChange={sync}
+          onKeyUp={moveCaret}
+          onClick={moveCaret}
+          onKeyDown={onKeyDown}
+          onBlur={() => setTimeout(() => setEditing(false), 120)}
+          placeholder="value or ${{ … }}"
+          className="field w-full py-1.5 font-mono text-sm"
+        />
+        {open && (
+          <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-border bg-bg shadow-xl">
+            <div className="border-b border-border px-3 py-1.5 text-[0.7rem] uppercase tracking-wide text-muted">Reference a database or app</div>
+            {sugs.map((c, i) => (
+              <button
+                key={c.key}
+                onMouseDown={(e) => { e.preventDefault(); pick(c); }}
+                onMouseEnter={() => setHi(i)}
+                className={cx('flex w-full items-center gap-2 px-3 py-1.5 text-left transition', i === hi ? 'bg-accent/[0.14]' : 'hover:surface-2')}
+              >
+                {c.kind === 'postgres' ? <Icon.Database className="h-3.5 w-3.5 shrink-0 text-accent" /> : <Icon.Layers className="h-3.5 w-3.5 shrink-0 text-muted" />}
+                <span className="font-mono text-xs text-secondary">{c.source}</span>
+                <span className="font-mono text-xs text-accent">.{c.field}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const refd = hasRef(value);
+  return (
+    <div className="flex flex-1 items-center gap-1">
+      <button
+        onClick={() => { setEditing(true); setDismissed(null); }}
+        title="Edit"
+        className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden rounded-md px-2 py-1.5 text-left font-mono text-sm transition hover:surface-2"
+      >
+        {refd ? (
+          <span className="flex flex-wrap items-center gap-0.5">
+            {splitRefs(value).map((s, i) => (s.ref ? <RefChip key={i} token={s.text} /> : <span key={i} className="text-secondary">{s.text}</span>))}
+          </span>
+        ) : reveal ? (
+          <span className="truncate text-secondary">{value || <span className="text-muted">empty</span>}</span>
+        ) : (
+          <span className="tracking-tight text-muted">{'•'.repeat(Math.min(value.length || 4, 24))}</span>
+        )}
+      </button>
+      {!refd && value !== '' && (
+        <button onClick={() => setReveal((s) => !s)} title="Reveal" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted transition hover:text-primary">{reveal ? <Icon.EyeOff className="h-4 w-4" /> : <Icon.Eye className="h-4 w-4" />}</button>
+      )}
+    </div>
+  );
+}
+
+function EnvRow({ k, val, catalog, onKey, onVal, onDel }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 transition hover:surface-2">
+      <input value={k} onChange={onKey} placeholder="KEY" spellCheck={false} className="field w-[38%] shrink-0 py-1.5 font-mono text-sm" />
+      <ValueField value={val} onChange={onVal} catalog={catalog} />
+      <button onClick={() => { navigator.clipboard?.writeText(val); toast('copied', 'success'); }} title="Copy" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted transition hover:text-primary"><Icon.Copy className="h-4 w-4" /></button>
+      <button onClick={onDel} title="Remove" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted transition hover:text-danger"><Icon.X className="h-4 w-4" /></button>
+    </div>
+  );
+}
 
 function EnvTab({ name }) {
   const [rows, setRows] = useState(null);
+  const [mode, setMode] = useState('table'); // 'table' | 'raw'
+  const [raw, setRaw] = useState('');
   const [busy, setBusy] = useState(false);
-  const [pasting, setPasting] = useState(false);
-  const [pasteText, setPasteText] = useState('');
+  const [catalog, setCatalog] = useState([]);
+
   useEffect(() => { api.getEnv(name).then(({ env }) => setRows(Object.entries(env).map(([k, v]) => ({ k, v })))); }, [name]);
+  // The reference catalog: every postgres field + every other app's var names, flattened.
+  useEffect(() => {
+    api.envRefs(name).then(({ sources }) => {
+      const flat = [];
+      for (const s of sources || []) for (const field of s.fields) flat.push({ source: s.name, field, kind: s.kind, key: `${s.name}.${field}` });
+      setCatalog(flat);
+    }).catch(() => {});
+  }, [name]);
+
   if (!rows) return <Spinner className="mx-auto my-10 h-5 w-5" />;
-  const upd = (i, key) => (e) => setRows((r) => r.map((row, j) => (j === i ? { ...row, [key]: e.target.value } : row)));
-  const applyPaste = () => {
-    const parsed = parseEnvBlock(pasteText);
-    if (!parsed.length) { toast('no KEY=VALUE lines found', 'error'); return; }
-    setRows((r) => {
-      const merged = new Map(r.filter((x) => x.k.trim()).map((x) => [x.k.trim(), x.v]));
-      for (const [k, v] of parsed) merged.set(k, v); // paste overrides existing keys
-      return [...merged].map(([k, v]) => ({ k, v }));
-    });
-    setPasteText(''); setPasting(false);
-    toast(`added ${parsed.length} variable${parsed.length > 1 ? 's' : ''} — review, then Save`, 'success');
-  };
+  const count = rows.filter((r) => r.k.trim()).length;
+
+  const toTable = () => { setRows(parseEnvBlock(raw).map(([k, v]) => ({ k, v }))); setMode('table'); };
+  const toRaw = () => { setRaw(serializeEnv(rows)); setMode('raw'); };
+
   const save = async () => {
     setBusy(true);
-    const env = {}; rows.forEach(({ k, v }) => { if (k.trim()) env[k.trim()] = v; });
+    const current = mode === 'raw' ? parseEnvBlock(raw).map(([k, v]) => ({ k, v })) : rows;
+    if (mode === 'raw') setRows(current);
+    const env = {}; current.forEach(({ k, v }) => { if (k.trim()) env[k.trim()] = v; });
     try { await api.setEnv(name, env); toast('env saved — redeploy to apply', 'success'); }
     catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
   };
+
   return (
     <div className="max-w-3xl">
-      <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
+      <div className="mb-3.5 flex flex-wrap items-start justify-between gap-2">
         <div>
           <h3 className="text-base font-semibold">Environment variables</h3>
-          <p className="mt-0.5 text-sm text-muted">Injected at deploy time. Redeploy to apply changes. Reference a database or another app with <code className="rounded bg-bg-secondary px-1 font-mono text-[0.75rem] text-accent">{'${{db-name.DATABASE_URL}}'}</code>.</p>
+          <p className="mt-0.5 text-sm text-muted">Injected at deploy time. Type <code className="rounded bg-bg-secondary px-1 font-mono text-[0.75rem] text-accent">{'${{'}</code> in a value to reference a database or another app.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setPasting((p) => !p)} className={cx('flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition', pasting ? 'border-accent text-accent' : 'border-border bg-bg-secondary hover:border-muted/50')}><Icon.FileCode className="h-4 w-4" /> Paste .env</button>
-          <button onClick={() => setRows((r) => [...r, { k: '', v: '' }])} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-sm font-medium transition hover:border-muted/50"><Icon.Plus className="h-4 w-4" /> Add variable</button>
+        {/* Table ⇄ Raw, like Railway's raw editor */}
+        <div className="flex shrink-0 rounded-xl border border-border bg-bg-secondary p-0.5">
+          <button onClick={() => mode === 'raw' && toTable()} className={cx('flex items-center gap-1.5 rounded-[0.6rem] px-2.5 py-1.5 text-sm font-medium transition', mode === 'table' ? 'bg-bg text-primary shadow-sm' : 'text-muted hover:text-primary')}><Icon.List className="h-4 w-4" /> Table</button>
+          <button onClick={() => mode === 'table' && toRaw()} className={cx('flex items-center gap-1.5 rounded-[0.6rem] px-2.5 py-1.5 text-sm font-medium transition', mode === 'raw' ? 'bg-bg text-primary shadow-sm' : 'text-muted hover:text-primary')}><Icon.Braces className="h-4 w-4" /> Raw</button>
         </div>
       </div>
-      {pasting && (
-        <div className="surface mb-3 p-3">
+
+      {mode === 'raw' ? (
+        <div className="surface overflow-hidden p-0">
           <textarea
             autoFocus
-            value={pasteText}
-            onChange={(e) => setPasteText(e.target.value)}
-            rows={7}
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
             spellCheck={false}
-            placeholder={'Paste a .env block, e.g.\nDATABASE_URL=postgres://…\nAPP_KEY=…\nNODE_ENV=production'}
-            className="field w-full resize-y py-2 font-mono text-sm"
+            rows={Math.max(8, raw.split('\n').length + 1)}
+            placeholder={'KEY=value, one per line\nDATABASE_URL=${{gobi-db.DATABASE_URL}}\nNODE_ENV=production'}
+            className="w-full resize-y bg-transparent px-4 py-3 font-mono text-sm leading-relaxed text-secondary outline-none"
           />
-          <div className="mt-2 flex items-center justify-between">
-            <span className="text-xs text-muted">Existing keys are overwritten; the rest are added. Nothing saves until you hit Save.</span>
-            <div className="flex gap-2">
-              <button onClick={() => { setPasteText(''); setPasting(false); }} className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted transition hover:text-primary">Cancel</button>
-              <button onClick={applyPaste} className="rounded-lg bg-accent px-3.5 py-1.5 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]">Add variables</button>
+          <div className="flex items-center justify-between border-t border-border px-4 py-3">
+            <span className="text-xs text-muted">Edit freely — parsed back into variables on Save or when you switch to Table.</span>
+            <button onClick={save} disabled={busy} className="rounded-xl bg-accent px-3.5 py-1.5 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06] disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button>
+          </div>
+        </div>
+      ) : (
+        <div className="surface divide-y divide-border overflow-visible p-0">
+          {rows.length === 0 && <p className="px-4 py-6 text-sm text-muted">No variables yet — add one below, or switch to Raw to paste a .env.</p>}
+          {rows.map((row, i) => (
+            <EnvRow
+              key={i}
+              k={row.k}
+              val={row.v}
+              catalog={catalog}
+              onKey={(e) => setRows((r) => r.map((x, j) => (j === i ? { ...x, k: e.target.value } : x)))}
+              onVal={(v) => setRows((r) => r.map((x, j) => (j === i ? { ...x, v } : x)))}
+              onDel={() => setRows((r) => r.filter((_, j) => j !== i))}
+            />
+          ))}
+          <div className="flex items-center justify-between px-3 py-2.5">
+            <button onClick={() => setRows((r) => [...r, { k: '', v: '' }])} className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-medium text-muted transition hover:text-primary"><Icon.Plus className="h-4 w-4" /> New variable</button>
+            <div className="flex items-center gap-3">
+              <span className="font-mono text-xs text-muted">{count} variable{count === 1 ? '' : 's'}</span>
+              <button onClick={save} disabled={busy} className="rounded-xl bg-accent px-3.5 py-1.5 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06] disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button>
             </div>
           </div>
         </div>
       )}
-      <div className="surface divide-y divide-border overflow-hidden p-0">
-        {rows.length === 0 && <p className="px-4 py-6 text-sm text-muted">No variables yet.</p>}
-        {rows.map((row, i) => <EnvRow key={i} k={row.k} val={row.v} onKey={upd(i, 'k')} onVal={upd(i, 'v')} onDel={() => setRows((r) => r.filter((_, j) => j !== i))} />)}
-        <div className="flex items-center justify-between px-4 py-3">
-          <span className="font-mono text-xs text-muted">{rows.filter((r) => r.k.trim()).length} variables</span>
-          <button onClick={save} disabled={busy} className="rounded-xl bg-accent px-3.5 py-1.5 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06] disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button>
-        </div>
-      </div>
     </div>
   );
 }

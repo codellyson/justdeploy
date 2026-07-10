@@ -22,6 +22,7 @@ export const api = {
   remove: (name) => req(`/apps/${name}`, { method: 'DELETE' }),
   getEnv: (name) => req(`/apps/${name}/env`),
   setEnv: (name, env) => req(`/apps/${name}/env`, { method: 'PUT', body: { env } }),
+  envRefs: (name) => req(`/apps/${name}/refs`),
   setConfig: (name, cfg) => req(`/apps/${name}/config`, { method: 'PUT', body: cfg }),
   resource: (name) => req(`/resources/${name}`),
   removeResource: (name) => req(`/resources/${name}`, { method: 'DELETE' }),

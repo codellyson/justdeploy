@@ -15,6 +15,14 @@ import * as pg from './postgres.js';
 const RE = /\$\{\{\s*([\w-]+)(?:\.([\w-]+))?\s*\}\}/g;
 export const hasRef = (v) => typeof v === 'string' && RE.test(v);
 
+// The postgres fields advertised in the dashboard's reference autocomplete, best-first. The
+// resolver (pgFields) also accepts friendly aliases (HOST, PORT, URL, …); these are the canonical
+// names we surface. Keep in sync with pgFields below.
+export const PG_REF_FIELDS = [
+  'DATABASE_URL', 'DATABASE_PUBLIC_URL', 'PGHOST', 'PGPORT',
+  'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGSSLMODE',
+];
+
 // The fields a postgres resource exposes. Apps run as host processes, so the reachable host is
 // always 127.0.0.1 (the localhost-published port) — the same address the stored conn uses.
 function pgFields(info) {

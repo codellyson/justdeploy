@@ -5,7 +5,7 @@ import {
   LuCheck, LuX, LuCopy, LuTrash2, LuRotateCcw, LuTerminal, LuDatabase, LuFileCode2,
   LuGlobe, LuGitCommitHorizontal, LuGitBranch, LuClock, LuActivity, LuServer,
   LuLock, LuEye, LuEyeOff, LuTriangleAlert, LuZap, LuRocket, LuLayers, LuSettings2,
-  LuSearch,
+  LuSearch, LuList, LuBraces, LuChevronDown, LuLink,
 } from 'react-icons/lu';
 import { SiReact, SiVite, SiNextdotjs, SiAdonisjs, SiPostgresql, SiGithub } from 'react-icons/si';
 
@@ -40,6 +40,10 @@ export const Icon = {
   Settings: LuSettings2,
   Search: LuSearch,
   FileCode: LuFileCode2,
+  List: LuList,
+  Braces: LuBraces,
+  ChevronDown: LuChevronDown,
+  Link: LuLink,
   Github: SiGithub,
 };
 
