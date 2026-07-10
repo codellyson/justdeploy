@@ -21,23 +21,31 @@ export function NewProject() {
   const navigate = useNavigate();
   const [type, setType] = useState(null);
   const [f, setF] = useState({});
-  const [touched, setTouched] = useState({ name: false, domain: false });
+  const [touched, setTouched] = useState({ name: false, domain: false, release: false });
   const [baseDomain, setBaseDomain] = useState('');
+  const [typePresets, setTypePresets] = useState([]);
   const [detected, setDetected] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
 
-  // Auto-generate a project name on open, and learn the base domain for suggestions.
+  // Auto-generate a project name on open, and learn the base domain + type presets.
   useEffect(() => {
     setF((s) => ({ ...s, name: s.name || suggestName() }));
-    api.state().then((st) => setBaseDomain(st.baseDomain || '')).catch(() => {});
+    api.state().then((st) => { setBaseDomain(st.baseDomain || ''); setTypePresets(st.types || []); }).catch(() => {});
   }, []);
 
   // Keep the domain suggested as `{name}.{base}` until the user edits it themselves.
   useEffect(() => {
     if (!touched.domain && f.name && baseDomain) setF((s) => ({ ...s, domain: `${slug(f.name)}.${baseDomain}` }));
   }, [f.name, baseDomain, touched.domain]);
+
+  // Pre-fill the release command from the type's preset (Adonis → migrations) until the user edits it.
+  useEffect(() => {
+    if (touched.release || !type) return;
+    const preset = typePresets.find((t) => t.id === type);
+    setF((s) => ({ ...s, release: preset?.release || '' }));
+  }, [type, typePresets, touched.release]);
 
   const onName = (e) => { setTouched((t) => ({ ...t, name: true })); setF((s) => ({ ...s, name: e.target.value })); };
   const onDomain = (e) => { setTouched((t) => ({ ...t, domain: true })); setF((s) => ({ ...s, domain: e.target.value })); };
@@ -126,7 +134,7 @@ export function NewProject() {
 
           {PROXY.includes(type) && (
             <div className="flex flex-wrap gap-4">
-              <div className="flex flex-1 basis-52 flex-col gap-1.5"><label className="label-tiny">Release command (optional)</label><input value={f.release || ''} onChange={set('release')} placeholder="node ace migration:run --force" className="field font-mono text-[0.8rem]" /></div>
+              <div className="flex flex-1 basis-52 flex-col gap-1.5"><label className="label-tiny">Release command {f.release ? <span className="font-normal normal-case tracking-normal text-muted/70">— preset for this type, edit if you like</span> : <span className="font-normal normal-case tracking-normal text-muted/70">— optional</span>}</label><input value={f.release || ''} onChange={(e) => { setTouched((t) => ({ ...t, release: true })); setF((s) => ({ ...s, release: e.target.value })); }} placeholder="node ace migration:run --force" className="field font-mono text-[0.8rem]" /></div>
               <div className="flex flex-1 basis-52 flex-col gap-1.5"><label className="label-tiny">Persist dirs (optional)</label><input value={f.persist || ''} onChange={set('persist')} placeholder="tmp" className="field font-mono text-[0.8rem]" /></div>
             </div>
           )}

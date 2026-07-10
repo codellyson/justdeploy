@@ -236,8 +236,10 @@ Three steps:
 
 ### What each type auto-fills
 
-- **Adonis** generates `APP_KEY`, sets `HOST=0.0.0.0`, `PORT`, `NODE_ENV`. The env is
-  pre-populated with the required vars; you only edit it to add your own.
+- **Adonis** generates `APP_KEY`, sets `HOST=0.0.0.0`, `PORT`, `NODE_ENV`, and pre-fills the
+  release command to `node ace migration:run --force` (Adonis is DB-backed — migrations run on
+  every deploy, before the server starts). The env is pre-populated with the required vars; you
+  only edit it to add your own.
 - **Next** sets `HOSTNAME=0.0.0.0`, `PORT`, and silently runs the standalone
   asset-copy step, so the broken-CSS trap never happens.
 - **React / Vite / static** configure nothing. Source and domain, then deploy.

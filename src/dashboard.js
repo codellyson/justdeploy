@@ -323,7 +323,7 @@ async function api(database, req, res, path) {
     return send(res, 200, {
       apps: db.listApps(database).map((a) => appView(database, a)),
       resources: db.listResources(database),
-      types: TYPES.map((t) => ({ id: t, serve: TABLE[t].serve })),
+      types: TYPES.map((t) => ({ id: t, serve: TABLE[t].serve, release: TABLE[t].release || null })),
       // Suggest `{name}.{base}` domains — override with a `base_domain` setting, else the
       // dashboard's own domain (apps are subdomains of it).
       baseDomain: db.getSetting(database, 'base_domain') || db.getSetting(database, 'dashboard_domain') || null,
@@ -388,7 +388,8 @@ async function api(database, req, res, path) {
 
     db.upsertApp(database, {
       name, type, domain, repo, serve,
-      release_cmd: release || null, persist: persist || null, created_at: now(),
+      // The type carries its own release command (Adonis → migrations); an explicit one overrides.
+      release_cmd: release || row(type).release || null, persist: persist || null, created_at: now(),
     });
     if (type === 'adonis') db.setEnv(database, name, 'APP_KEY', randomBytes(32).toString('base64url'));
 

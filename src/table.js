@@ -36,6 +36,9 @@ export const TABLE = {
     build: `${NPM} && node ace build && ([ -f package-lock.json ] && cp package-lock.json build/ || true) && cd build && ${NPM_PROD}`,
     cwd: 'build',
     run: ['node', 'bin/server.js'],
+    // Adonis is DB-backed: run migrations after build, before the server starts. Idempotent,
+    // so it's safe on every deploy. Part of the type preset — no per-app configuration needed.
+    release: 'node ace migration:run --force',
   },
   nextjs: {
     serve: 'proxy',
