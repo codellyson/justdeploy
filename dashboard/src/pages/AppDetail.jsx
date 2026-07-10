@@ -259,6 +259,59 @@ function activeToken(text, caret) {
   if (open === -1 || before.slice(open + 3).includes('}}')) return null;
   return { open, query: before.slice(open + 3).trim() };
 }
+// Best matches from the reference catalog for the partial query after `${{`.
+const filterCatalog = (catalog, query) => {
+  const q = query.toLowerCase();
+  return catalog.filter((c) => c.key.toLowerCase().includes(q)).slice(0, 8);
+};
+
+// Pixel position of the caret inside a textarea (mirror-div technique) so the suggestion
+// dropdown can anchor exactly where you're typing — textareas expose no native caret rect.
+const MIRROR_PROPS = ['boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+  'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'fontFamily', 'fontSize',
+  'fontWeight', 'fontStyle', 'letterSpacing', 'lineHeight', 'textTransform', 'wordSpacing', 'tabSize'];
+function caretXY(el, pos) {
+  const cs = getComputedStyle(el);
+  const div = document.createElement('div');
+  for (const p of MIRROR_PROPS) div.style[p] = cs[p];
+  div.style.position = 'absolute';
+  div.style.visibility = 'hidden';
+  div.style.whiteSpace = 'pre-wrap';
+  div.style.overflowWrap = 'break-word';
+  div.style.overflow = 'hidden';
+  div.textContent = el.value.slice(0, pos);
+  const span = document.createElement('span');
+  span.textContent = el.value.slice(pos) || '.';
+  div.appendChild(span);
+  document.body.appendChild(div);
+  const top = span.offsetTop + parseInt(cs.borderTopWidth, 10);
+  const left = span.offsetLeft + parseInt(cs.borderLeftWidth, 10);
+  const height = parseInt(cs.lineHeight, 10) || parseInt(cs.fontSize, 10) * 1.4;
+  document.body.removeChild(div);
+  return { top, left, height };
+}
+
+// The `${{ … }}` suggestion list, shared by the table value cells and the raw editor so they
+// look and behave identically. Positioning is up to the caller (className / style).
+function RefDropdown({ sugs, hi, setHi, onPick, className, style }) {
+  return (
+    <div style={style} className={cx('overflow-hidden rounded-xl border border-border bg-bg shadow-xl', className)}>
+      <div className="border-b border-border px-3 py-1.5 text-[0.7rem] uppercase tracking-wide text-muted">Reference a database or app</div>
+      {sugs.map((c, i) => (
+        <button
+          key={c.key}
+          onMouseDown={(e) => { e.preventDefault(); onPick(c); }}
+          onMouseEnter={() => setHi(i)}
+          className={cx('flex w-full items-center gap-2 whitespace-nowrap px-3 py-1.5 text-left transition', i === hi ? 'bg-accent/[0.14]' : 'hover:surface-2')}
+        >
+          {c.kind === 'postgres' ? <Icon.Database className="h-3.5 w-3.5 shrink-0 text-accent" /> : <Icon.Layers className="h-3.5 w-3.5 shrink-0 text-muted" />}
+          <span className="font-mono text-xs text-secondary">{c.source}</span>
+          <span className="truncate font-mono text-xs text-accent">.{c.field}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
 
 // A rendered reference, e.g. ${{gobi-db.DATABASE_URL}} → a pill with the source + field.
 function RefChip({ token }) {
@@ -303,11 +356,7 @@ function ValueField({ value, onChange, catalog }) {
   const pend = useRef(null); // caret position to restore after an insert
 
   const tok = editing ? activeToken(value, caret) : null;
-  const sugs = useMemo(() => {
-    if (!tok) return [];
-    const q = tok.query.toLowerCase();
-    return catalog.filter((c) => c.key.toLowerCase().includes(q)).slice(0, 8);
-  }, [tok?.query, catalog, editing]);
+  const sugs = useMemo(() => (tok ? filterCatalog(catalog, tok.query) : []), [tok?.query, catalog, editing]);
   const open = !!tok && tok.query !== dismissed && sugs.length > 0;
 
   useEffect(() => { setHi(0); }, [tok?.query]);
@@ -351,23 +400,7 @@ function ValueField({ value, onChange, catalog }) {
           placeholder="value or ${{ … }}"
           className="field w-full py-1.5 font-mono text-sm"
         />
-        {open && (
-          <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-border bg-bg shadow-xl">
-            <div className="border-b border-border px-3 py-1.5 text-[0.7rem] uppercase tracking-wide text-muted">Reference a database or app</div>
-            {sugs.map((c, i) => (
-              <button
-                key={c.key}
-                onMouseDown={(e) => { e.preventDefault(); pick(c); }}
-                onMouseEnter={() => setHi(i)}
-                className={cx('flex w-full items-center gap-2 px-3 py-1.5 text-left transition', i === hi ? 'bg-accent/[0.14]' : 'hover:surface-2')}
-              >
-                {c.kind === 'postgres' ? <Icon.Database className="h-3.5 w-3.5 shrink-0 text-accent" /> : <Icon.Layers className="h-3.5 w-3.5 shrink-0 text-muted" />}
-                <span className="font-mono text-xs text-secondary">{c.source}</span>
-                <span className="font-mono text-xs text-accent">.{c.field}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        {open && <RefDropdown sugs={sugs} hi={hi} setHi={setHi} onPick={pick} className="absolute left-0 right-0 top-full z-20 mt-1" />}
       </div>
     );
   }
@@ -404,6 +437,67 @@ function EnvRow({ k, val, catalog, onKey, onVal, onDel }) {
       <ValueField value={val} onChange={onVal} catalog={catalog} />
       <button onClick={() => { navigator.clipboard?.writeText(val); toast('copied', 'success'); }} title="Copy" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted transition hover:text-primary"><Icon.Copy className="h-4 w-4" /></button>
       <button onClick={onDel} title="Remove" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted transition hover:text-danger"><Icon.X className="h-4 w-4" /></button>
+    </div>
+  );
+}
+
+// The raw .env textarea, with the same `${{` autocomplete as the table — anchored at the caret.
+function RawEnvEditor({ value, onChange, catalog }) {
+  const ref = useRef(null);
+  const [caret, setCaret] = useState(0);
+  const [hi, setHi] = useState(0);
+  const [dismissed, setDismissed] = useState(null);
+  const [xy, setXy] = useState(null);
+  const pend = useRef(null);
+
+  const tok = activeToken(value, caret);
+  const sugs = useMemo(() => (tok ? filterCatalog(catalog, tok.query) : []), [tok?.query, catalog]);
+  const open = !!tok && tok.query !== dismissed && sugs.length > 0;
+
+  useEffect(() => { setHi(0); }, [tok?.query]);
+  useEffect(() => { if (open && ref.current) setXy(caretXY(ref.current, caret)); }, [open, caret, value]);
+  useEffect(() => {
+    if (pend.current != null && ref.current) { ref.current.setSelectionRange(pend.current, pend.current); setCaret(pend.current); pend.current = null; }
+  });
+
+  const sync = (e) => { onChange(e.target.value); setCaret(e.target.selectionStart ?? e.target.value.length); };
+  const moveCaret = (e) => setCaret(e.target.selectionStart ?? 0);
+  const pick = (c) => {
+    const t = activeToken(value, caret); if (!t) return;
+    const insert = `\${{${c.source}${c.field ? '.' + c.field : ''}}}`;
+    onChange(value.slice(0, t.open) + insert + value.slice(caret));
+    pend.current = t.open + insert.length; ref.current?.focus();
+  };
+  const onKeyDown = (e) => {
+    if (!open) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHi((h) => (h + 1) % sugs.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((h) => (h - 1 + sugs.length) % sugs.length); }
+    else if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(sugs[hi]); }
+    else if (e.key === 'Escape') { e.preventDefault(); setDismissed(tok.query); }
+  };
+
+  // Anchor the dropdown just below the caret line, clamped inside the textarea's width.
+  const pos = open && xy ? {
+    top: xy.top - (ref.current?.scrollTop || 0) + xy.height + 4,
+    left: Math.min(xy.left, (ref.current?.clientWidth || 320) - 332),
+  } : null;
+
+  return (
+    <div className="relative">
+      <textarea
+        ref={ref}
+        autoFocus
+        value={value}
+        spellCheck={false}
+        onChange={sync}
+        onKeyUp={moveCaret}
+        onClick={moveCaret}
+        onKeyDown={onKeyDown}
+        rows={Math.max(8, value.split('\n').length + 1)}
+        placeholder={'KEY=value, one per line\nDATABASE_URL=${{gobi-db.DATABASE_URL}}\nNODE_ENV=production'}
+        className="w-full resize-y bg-transparent px-4 py-3 font-mono text-sm leading-relaxed text-secondary outline-none"
+      />
+      {pos && <RefDropdown sugs={sugs} hi={hi} setHi={setHi} onPick={pick} className="absolute z-30 w-[324px]" style={pos} />}
     </div>
   );
 }
@@ -455,18 +549,10 @@ function EnvTab({ name }) {
       </div>
 
       {mode === 'raw' ? (
-        <div className="surface overflow-hidden p-0">
-          <textarea
-            autoFocus
-            value={raw}
-            onChange={(e) => setRaw(e.target.value)}
-            spellCheck={false}
-            rows={Math.max(8, raw.split('\n').length + 1)}
-            placeholder={'KEY=value, one per line\nDATABASE_URL=${{gobi-db.DATABASE_URL}}\nNODE_ENV=production'}
-            className="w-full resize-y bg-transparent px-4 py-3 font-mono text-sm leading-relaxed text-secondary outline-none"
-          />
+        <div className="surface overflow-visible p-0">
+          <RawEnvEditor value={raw} onChange={setRaw} catalog={catalog} />
           <div className="flex items-center justify-between border-t border-border px-4 py-3">
-            <span className="text-xs text-muted">Edit freely — parsed back into variables on Save or when you switch to Table.</span>
+            <span className="text-xs text-muted">Edit freely — type <code className="rounded bg-bg-secondary px-1 font-mono text-accent">{'${{'}</code> to reference. Parsed back into variables on Save.</span>
             <button onClick={save} disabled={busy} className="rounded-xl bg-accent px-3.5 py-1.5 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06] disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button>
           </div>
         </div>
