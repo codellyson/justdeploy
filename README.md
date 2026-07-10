@@ -183,7 +183,7 @@ Two optional per-app knobs, set at `add`, via `justdeploy set`, or in the dashbo
 | `vite`   | static      | serves `dist/` with SPA fallback                          |
 | `static` | static      | serves the repo root                                     |
 | `adonis` | proxy       | `APP_KEY`, `HOST=0.0.0.0`, `PORT`, `NODE_ENV`, migrations |
-| `nextjs` | proxy       | `HOSTNAME=0.0.0.0`, `PORT`, runs the standalone asset copy |
+| `nextjs` | proxy       | `HOSTNAME=0.0.0.0`, `PORT`; runs `next start` as-is (no next.config change), or standalone if set |
 | `postgres` | resource  | `docker run` + scoped non-superuser role, TLS, localhost port |
 
 ## Config & source of truth

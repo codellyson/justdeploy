@@ -93,9 +93,10 @@ async function buildRelease(database, name, type, sha) {
   const buildEnv = appEnv(database, name, type, app.live_port || 4000);
   if (r.build) await run(name, rel, r.build, buildEnv);
   if (r.postBuild === 'next-standalone-copy') {
-    // Standalone mode does not copy static assets or public/ — the classic broken-CSS trap.
-    await run(name, rel, 'cp -r .next/static .next/standalone/.next/static');
-    await run(name, rel, 'cp -r public .next/standalone/public 2>/dev/null || true');
+    // Only when the app opted into standalone output: it doesn't copy static assets or public/
+    // (the classic broken-CSS trap). If there's no standalone dir, we run via `next start`, which
+    // serves those itself — so skip the copy rather than fail the build.
+    await run(name, rel, 'if [ -d .next/standalone ]; then cp -r .next/static .next/standalone/.next/static; cp -r public .next/standalone/public 2>/dev/null || true; fi');
   }
   setupPersistence(name, type, sha, app.persist); // stable data dirs before the app runs
   writeFileSync(marker, sha);

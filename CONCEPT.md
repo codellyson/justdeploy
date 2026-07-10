@@ -39,7 +39,7 @@ This table is the only thing that varies between app types. Everything else is s
 | `vite`     | `npm ci && npm run build`                                          | `dist/` (folder)              | static           |
 | `static`   | none (or custom)                                                   | `./` or `public/`             | static           |
 | `adonis`   | `npm ci && node ace build && cp package-lock.json build/ && cd build && npm ci --omit=dev` | `build/bin/server.js` | proxy |
-| `nextjs`   | `npm ci && npm run build`                                          | `.next/standalone/server.js`  | proxy            |
+| `nextjs`   | `npm ci && npm run build`                                          | `next start` (or standalone if set) | proxy      |
 | `postgres` | none                                                               | container                     | one-time recipe  |
 
 Adding a framework later is appending a row, not writing new logic.
@@ -116,27 +116,37 @@ the dashboard's per-app Config panel.
 
 ### Next.js
 
-Needs `output: 'standalone'` in `next.config.js`, which produces a self-contained
-`server.js`.
-
-Wrinkle: standalone mode does not copy static assets or `public/`. Do it after build:
+Works with **no `next.config` changes** — you do not have to opt into standalone. After build,
+the launch step picks the right runner:
 
 ```
-cp -r .next/static .next/standalone/.next/static
-cp -r public .next/standalone/public   2>/dev/null || true
+if [ -f .next/standalone/server.js ]; then
+  node .next/standalone/server.js          # you set output: 'standalone' — leaner, preferred
+else
+  node_modules/.bin/next start -H 0.0.0.0 -p "$PORT"   # default: works for any Next.js app as-is
+fi
 ```
 
-Required env:
+Required env (auto-filled by the type):
 
 ```
 PORT=4002
 HOSTNAME=0.0.0.0
 ```
 
-Launch: `node .next/standalone/server.js`
+Why the fallback: requiring `output: 'standalone'` was JustDeploy-specific friction — a user
+coming from Vercel never sets it. `next start` runs any built Next.js app because the release
+keeps its `node_modules`. If the user *did* opt into standalone (smaller, no node_modules at
+runtime), we prefer it — and then copy the static assets it omits:
 
-Trap: skip the copy step and you get a running app with no CSS and 404ing images. This is
-the classic "Next standalone looks broken" symptom.
+```
+cp -r .next/static .next/standalone/.next/static
+cp -r public .next/standalone/public   2>/dev/null || true
+```
+
+Trap (standalone only): skip that copy and you get a running app with no CSS and 404ing images —
+the classic "Next standalone looks broken" symptom. JustDeploy does the copy for you, and only
+when a standalone build is present.
 
 ## Databases
 
@@ -261,8 +271,9 @@ Three steps:
   release command to `node ace migration:run --force` (Adonis is DB-backed — migrations run on
   every deploy, before the server starts). The env is pre-populated with the required vars; you
   only edit it to add your own.
-- **Next** sets `HOSTNAME=0.0.0.0`, `PORT`, and silently runs the standalone
-  asset-copy step, so the broken-CSS trap never happens.
+- **Next** sets `HOSTNAME=0.0.0.0`, `PORT`, and runs the app as-is via `next start` — no
+  `next.config` change needed. If the app opted into `output: 'standalone'`, it prefers that and
+  silently runs the asset-copy step, so the broken-CSS trap never happens either way.
 - **React / Vite / static** configure nothing. Source and domain, then deploy.
 - **Postgres** provisions the container and records a connection string. It is a resource
   you *add* (and reference via `postgres:` in an app's config), not a thing you deploy.

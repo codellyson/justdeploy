@@ -45,7 +45,11 @@ export const TABLE = {
     build: `${NPM} && npm run build`,
     postBuild: 'next-standalone-copy',
     cwd: '.',
-    run: ['node', '.next/standalone/server.js'],
+    // Prefer the standalone bundle when the app opted into `output: 'standalone'` (smaller, no
+    // node_modules needed); otherwise fall back to `next start`, which works for any Next.js app
+    // as-is (node_modules is present in the release). So a user never has to edit next.config.
+    // `exec` replaces this sh so the tracked pid stays the Node process. PORT comes from autoEnv.
+    run: ['sh', '-c', 'if [ -f .next/standalone/server.js ]; then exec node .next/standalone/server.js; else exec node_modules/.bin/next start -H 0.0.0.0 -p "$PORT"; fi'],
   },
   postgres: {
     serve: 'resource',
