@@ -67,6 +67,16 @@ const RULES = [
     hint: 'Check that Caddy is running: `systemctl status caddy`. JustDeploy drives it via localhost:2019.',
   },
   {
+    match: /ERESOLVE|could not resolve dependency|conflicting peer dependency/i,
+    reason: 'npm refused to install — conflicting peer dependencies',
+    hint: (text) => {
+      // Name the actual blocker: the package in the "Could not resolve dependency" block.
+      const pkg = text.match(/Could not resolve dependency:[\s\S]*?peer [^\n]*?from ([\w.@/-]+)/i)?.[1];
+      const who = pkg ? ` (\`${pkg}\` hasn't declared support for your installed React/dependency version yet)` : '';
+      return `A dependency's peer range doesn't match your installed versions${who}. Add an \`.npmrc\` at your repo root with \`legacy-peer-deps=true\`, run \`npm install --legacy-peer-deps\` to refresh package-lock.json, and commit both. JustDeploy runs \`npm ci\`, which reads that \`.npmrc\` — no per-app config needed.`;
+    },
+  },
+  {
     match: /npm error|tsc|error TS\d+|Build failed|vite.*error/i,
     reason: 'The build step failed',
     hint: 'Open Logs for the build output. This is usually an app-side build error (dependencies, TypeScript, or the build script).',
