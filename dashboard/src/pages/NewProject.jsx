@@ -5,7 +5,7 @@ import { invalidate } from '../lib/store';
 import { toast } from '../components/toast';
 import { TypeIcon, Icon } from '../components/icons';
 import { GithubSource } from '../components/GithubSource';
-import { cx, typeLabel, slug, suggestName, nameFromRepo } from '../lib/format';
+import { cx, typeLabel, slug, suggestName, nameFromRepo, releaseHint, persistHint } from '../lib/format';
 
 const TYPES = ['react', 'vite', 'static', 'adonis', 'nextjs', 'postgres'];
 const PROXY = ['adonis', 'nextjs'];
@@ -134,8 +134,8 @@ export function NewProject() {
 
           {PROXY.includes(type) && (
             <div className="flex flex-wrap gap-4">
-              <div className="flex flex-1 basis-52 flex-col gap-1.5"><label className="label-tiny">Release command {f.release ? <span className="font-normal normal-case tracking-normal text-muted/70">— preset for this type, edit if you like</span> : <span className="font-normal normal-case tracking-normal text-muted/70">— optional</span>}</label><input value={f.release || ''} onChange={(e) => { setTouched((t) => ({ ...t, release: true })); setF((s) => ({ ...s, release: e.target.value })); }} placeholder="node ace migration:run --force" className="field font-mono text-[0.8rem]" /></div>
-              <div className="flex flex-1 basis-52 flex-col gap-1.5"><label className="label-tiny">Persist dirs (optional)</label><input value={f.persist || ''} onChange={set('persist')} placeholder="tmp" className="field font-mono text-[0.8rem]" /></div>
+              <div className="flex flex-1 basis-52 flex-col gap-1.5"><label className="label-tiny">Release command {f.release ? <span className="font-normal normal-case tracking-normal text-muted/70">— preset for this type, edit if you like</span> : <span className="font-normal normal-case tracking-normal text-muted/70">— optional</span>}</label><input value={f.release || ''} onChange={(e) => { setTouched((t) => ({ ...t, release: true })); setF((s) => ({ ...s, release: e.target.value })); }} placeholder={releaseHint(type)} className="field font-mono text-[0.8rem]" /></div>
+              <div className="flex flex-1 basis-52 flex-col gap-1.5"><label className="label-tiny">Persist dirs (optional)</label><input value={f.persist || ''} onChange={set('persist')} placeholder={persistHint(type)} className="field font-mono text-[0.8rem]" /></div>
             </div>
           )}
           {type === 'postgres' && <p className="text-sm text-muted">Provisions a Postgres container and hands out a connection string.</p>}

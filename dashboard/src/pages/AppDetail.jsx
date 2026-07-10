@@ -5,7 +5,7 @@ import { useVersion, invalidate } from '../lib/store';
 import { toast } from '../components/toast';
 import { StatusPill, StatusDot, Avatar, Mono, Spinner, tone, STATUS_META } from '../components/ui';
 import { TypeIcon, Icon } from '../components/icons';
-import { appHealth, shortSha, timeAgo, cx } from '../lib/format';
+import { appHealth, shortSha, timeAgo, cx, releaseHint, persistHint } from '../lib/format';
 
 const TABS = [
   { id: 'Overview', icon: Icon.Layers },
@@ -649,12 +649,12 @@ function ConfigTab({ app, onDelete }) {
         </div>
         <div className="flex flex-col gap-1.5">
           <label className="label-tiny">Release command</label>
-          <input value={release} onChange={(e) => setRelease(e.target.value)} placeholder="node ace migration:run --force" className="field font-mono" />
+          <input value={release} onChange={(e) => setRelease(e.target.value)} placeholder={releaseHint(app.type)} className="field font-mono" />
           <span className="text-xs text-muted">Runs after build, before the server starts.</span>
         </div>
         <div className="flex flex-col gap-1.5">
           <label className="label-tiny">Persisted dirs</label>
-          <input value={persist} onChange={(e) => setPersist(e.target.value)} placeholder="tmp" className="field font-mono" />
+          <input value={persist} onChange={(e) => setPersist(e.target.value)} placeholder={persistHint(app.type)} className="field font-mono" />
           <span className="text-xs text-muted">Comma-separated; symlinked to data/ so they survive deploys.</span>
         </div>
         <div className="flex justify-end"><button onClick={save} disabled={busy} className="rounded-xl bg-accent px-3.5 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06] disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button></div>

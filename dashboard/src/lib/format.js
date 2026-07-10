@@ -37,6 +37,14 @@ export const TYPE_LABEL = {
 };
 export const typeLabel = (t) => TYPE_LABEL[t] || t;
 
+// Example placeholders for the optional Release command / Persist dirs, per app type — so a
+// Next.js app never shows an Adonis `node ace` command as its example. These are hints only;
+// the actual Adonis release preset (a real value) comes from the type table via the API.
+const RELEASE_HINT = { adonis: 'node ace migration:run --force', nextjs: 'npx prisma migrate deploy' };
+const PERSIST_HINT = { adonis: 'tmp', nextjs: 'uploads' };
+export const releaseHint = (type) => RELEASE_HINT[type] || 'a command to run before the server starts';
+export const persistHint = (type) => PERSIST_HINT[type] || 'tmp';
+
 // App health for the status system: ok | running | failed | idle.
 export function appHealth(app) {
   if (app.deploying) return 'running';
