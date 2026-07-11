@@ -131,7 +131,7 @@ async function cmdAdd(a) {
 
   console.log(`registered ${name} (${type}${domain ? ' → ' + domain : ''})`);
 
-  if (serve === 'static' || serve === 'proxy') {
+  if (serve === 'static' || serve === 'proxy' || serve === 'container') {
     console.log('deploying...');
     await cmdDeploy({ _: [name] });
   }
@@ -141,7 +141,7 @@ async function cmdDeploy(a) {
   const database = db.open();
   const apps = a._[0] ? [db.getApp(database, a._[0])] : db.listApps(database);
   if (!apps[0]) die('no app to deploy');
-  for (const app of apps.filter((x) => x && (x.serve === 'static' || x.serve === 'proxy'))) {
+  for (const app of apps.filter((x) => x && (x.serve === 'static' || x.serve === 'proxy' || x.serve === 'container'))) {
     process.stdout.write(`deploy ${app.name} ... `);
     try {
       const { sha } = await engine.deploy(database, app.name);
@@ -164,7 +164,8 @@ function cmdLs() {
   const resources = db.listResources(database);
   if (!apps.length && !resources.length) return console.log('nothing yet — try: justdeploy add <repo> --type vite');
   for (const a of apps) {
-    const where = a.serve === 'proxy' ? `:${a.live_port ?? '-'} pid ${a.live_pid ?? '-'}` : a.serve;
+    const where = a.serve === 'proxy' ? `:${a.live_port ?? '-'} pid ${a.live_pid ?? '-'}`
+      : a.serve === 'container' ? `:${a.live_port ?? '-'} (container)` : a.serve;
     console.log(`${a.name.padEnd(20)} ${a.type.padEnd(8)} ${(a.domain || '').padEnd(24)} ${where}`);
   }
   for (const r of resources) {
