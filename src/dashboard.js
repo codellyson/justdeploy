@@ -19,7 +19,7 @@ import * as backup from './backup.js';
 import * as s3 from './s3.js';
 import { TABLE, TYPES, row } from './table.js';
 import { PG_REF_FIELDS } from './envref.js';
-import { logFile } from './paths.js';
+import { logFile, buildLog, runtimeLog } from './paths.js';
 
 // The built Vite/React dashboard (dashboard/dist). Build it with `justdeploy dashboard build`.
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -64,17 +64,17 @@ async function superviseOnce(database) {
     if (Date.now() < st.nextTry) continue;
 
     restarting.add(app.name);
-    appendFileSync(logFile(app.name), `\n[justdeploy] process ${app.live_pid} is down — restarting…\n`);
+    appendFileSync(runtimeLog(app.name), `\n[justdeploy] process ${app.live_pid} is down — restarting…\n`);
     let ok = false;
     try { ok = await engine.restart(database, app.name); } catch { ok = false; }
     if (ok) {
       crash.delete(app.name);
-      appendFileSync(logFile(app.name), '[justdeploy] restart OK\n');
+      appendFileSync(runtimeLog(app.name), '[justdeploy] restart OK\n');
     } else {
       st.fails += 1;
       st.nextTry = Date.now() + Math.min(60000, 5000 * 2 ** st.fails);
       crash.set(app.name, st);
-      appendFileSync(logFile(app.name), `[justdeploy] restart failed (attempt ${st.fails}) — backing off\n`);
+      appendFileSync(runtimeLog(app.name), `[justdeploy] restart failed (attempt ${st.fails}) — backing off\n`);
     }
     restarting.delete(app.name);
   }
@@ -253,8 +253,7 @@ function appView(database, a) {
 // Server-Sent Events: stream an app's log live. Polls the file size and pushes any newly
 // appended bytes — robust to which process wrote them (dashboard-triggered or CLI deploy)
 // and to the file not existing yet at connect time.
-function streamLog(req, res, name) {
-  const lf = logFile(name);
+function streamLog(req, res, lf) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -303,6 +302,18 @@ function streamDockerLogs(req, res, container) {
   child.stderr.on('data', (d) => sse(d.toString()));
   const hb = setInterval(() => res.write(': hb\n\n'), 15000);
   req.on('close', () => { clearInterval(hb); child.kill('SIGKILL'); });
+}
+
+// Where to read an app's logs for a kind: build → build.log; runtime → the app's live output
+// (runtime.log for host processes, `docker logs` for containers). Falls back to the legacy
+// combined app.log for apps not yet redeployed after the split.
+function logSource(database, name, kind) {
+  const app = db.getApp(database, name);
+  if (kind === 'runtime') {
+    if (app?.serve === 'container' && app.container) return { container: app.container };
+    return { file: runtimeLog(name), legacy: logFile(name) };
+  }
+  return { file: buildLog(name), legacy: logFile(name) };
 }
 
 function serveStatic(res, urlPath) {
@@ -639,7 +650,10 @@ async function api(database, req, res, path) {
     if (!db.getApp(database, name)) return send(res, 404, { error: 'no such app' });
 
     if (sub === 'stream' && req.method === 'GET') {
-      return streamLog(req, res, name); // SSE — keeps the connection open
+      const kind = new URL(req.url, 'http://x').searchParams.get('kind') || 'build';
+      const src = logSource(database, name, kind);
+      if (src.container) return streamDockerLogs(req, res, src.container); // SSE from docker logs
+      return streamLog(req, res, existsSync(src.file) ? src.file : src.legacy); // SSE tail of the file
     }
     if (sub === 'deploys' && req.method === 'GET') {
       return send(res, 200, { deploys: db.recentDeploys(database, name, 20) });
@@ -670,9 +684,16 @@ async function api(database, req, res, path) {
       return send(res, 200, { ok: true, deploying: true });
     }
     if (sub === 'logs' && req.method === 'GET') {
-      const lf = logFile(name);
-      const text = existsSync(lf) ? readFileSync(lf, 'utf8') : '';
-      return send(res, 200, { log: text.split('\n').slice(-400).join('\n') });
+      const kind = new URL(req.url, 'http://x').searchParams.get('kind') || 'build';
+      const src = logSource(database, name, kind);
+      let text = '';
+      if (src.container) {
+        try { text = execSync(`docker logs --tail 400 ${src.container} 2>&1`, { encoding: 'utf8' }); } catch { text = ''; }
+      } else {
+        text = existsSync(src.file) ? readFileSync(src.file, 'utf8')
+          : (existsSync(src.legacy) ? readFileSync(src.legacy, 'utf8') : '');
+      }
+      return send(res, 200, { log: text.split('\n').slice(-400).join('\n'), kind });
     }
     if (sub === 'env' && req.method === 'GET') {
       return send(res, 200, { env: db.getEnv(database, name) });

@@ -206,11 +206,13 @@ function LogsTab({ name }) {
   const boxRef = useRef(null);
   const [live, setLive] = useState(true);
   const [lines, setLines] = useState(0);
+  const [kind, setKind] = useState('build'); // 'build' (clone→build→migrations) | 'runtime' (app output)
   useEffect(() => {
     const box = boxRef.current;
     if (box) box.textContent = '';
     let count = 0;
-    const es = api.stream(name);
+    setLines(0);
+    const es = api.stream(name, kind);
     es.onmessage = (e) => {
       if (!box) return;
       const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
@@ -222,16 +224,21 @@ function LogsTab({ name }) {
     es.onopen = () => setLive(true);
     es.onerror = () => setLive(false);
     return () => es.close();
-  }, [name]);
+  }, [name, kind]);
   return (
     <div className="surface overflow-hidden p-0">
       <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
-        <span className="flex items-center gap-2 text-sm font-medium text-secondary"><Icon.Terminal className="h-4 w-4" /> Live logs</span>
+        <div className="flex rounded-lg border border-border bg-bg-secondary p-0.5">
+          {[['build', 'Build'], ['runtime', 'Runtime']].map(([k, label]) => (
+            <button key={k} onClick={() => setKind(k)} title={k === 'build' ? 'clone, build, migrations' : "the running app's output"}
+              className={cx('rounded-md px-2.5 py-1 text-xs font-medium transition', kind === k ? 'bg-bg text-primary shadow-sm' : 'text-muted hover:text-primary')}>{label}</button>
+          ))}
+        </div>
         <span className={cx('flex items-center gap-1.5 font-mono text-[0.7rem]', live ? 'text-success' : 'text-warning')}>
           <span className={cx('h-1.5 w-1.5 rounded-full pulse-dot', live ? 'bg-success' : 'bg-warning')} />{live ? 'streaming' : 'reconnecting'}
         </span>
         <div className="flex-1" />
-        <span className="font-mono text-[0.7rem] text-muted">{lines} lines</span>
+        <span className="font-mono text-[0.7rem] text-muted">{lines} lines · {kind === 'build' ? 'this deploy' : 'live'}</span>
       </div>
       <pre ref={boxRef} className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words bg-bg p-4 font-mono text-xs leading-relaxed text-secondary" />
     </div>

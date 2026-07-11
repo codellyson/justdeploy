@@ -6,6 +6,7 @@
 // railpack at it via BUILDKIT_HOST. Everything else is plain `docker`.
 import { spawnSync } from 'node:child_process';
 import { run } from './sh.js';
+import { buildLog } from './paths.js';
 
 const BUILDKIT = 'jd-buildkit';
 const BUILDKIT_HOST = `docker-container://${BUILDKIT}`;
@@ -31,7 +32,7 @@ export function ensureBuildkit() {
 // Build `srcDir` into the app's image with Railpack. Streams build output to the app log.
 export async function build(logName, app, sha, srcDir) {
   ensureBuildkit();
-  await run(logName, srcDir, `railpack build . --name ${imageTag(app, sha)}`, { BUILDKIT_HOST });
+  await run(logName, srcDir, `railpack build . --name ${imageTag(app, sha)}`, { BUILDKIT_HOST }, buildLog(logName));
 }
 
 export const imageExists = (app, sha) => docker(['image', 'inspect', imageTag(app, sha)]).status === 0;

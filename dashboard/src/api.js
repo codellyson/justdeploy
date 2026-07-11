@@ -59,8 +59,8 @@ export const api = {
   githubRepos: () => req('/github/repos'),
   githubDetect: (repo) => req('/github/detect?repo=' + encodeURIComponent(repo)),
 
-  // SSE — returns the EventSource so the caller can close it.
-  stream: (name) => new EventSource(`/api/apps/${name}/stream`),
+  // SSE — returns the EventSource so the caller can close it. kind: 'build' | 'runtime'.
+  stream: (name, kind = 'build') => new EventSource(`/api/apps/${name}/stream?kind=${kind}`),
 };
 
 // Launch the GitHub App create flow: fetch the pre-filled manifest, then POST it to GitHub as a

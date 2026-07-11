@@ -10,7 +10,10 @@ export const SRV = process.env.JUSTDEPLOY_SRV || '/srv';
 
 export const repoDir = (name) => join(SRV, name, 'repo');   // git working area
 export const dataDir = (name) => join(SRV, name, 'data');   // persists across deploys (SQLite dbs, uploads)
-export const logFile = (name) => join(SRV, name, 'logs', 'app.log');
+export const logFile = (name) => join(SRV, name, 'logs', 'app.log'); // legacy combined log (fallback)
+// Split logs: the build/release output for the current deploy vs the running app's live output.
+export const buildLog = (name) => join(SRV, name, 'logs', 'build.log');     // clone → build → migrations
+export const runtimeLog = (name) => join(SRV, name, 'logs', 'runtime.log'); // the app's stdout/stderr
 
 // Release-based deploys: each deploy builds into releases/<sha>; `current` symlinks the live
 // one. Rollback re-points `current` to a kept release — no rebuild.

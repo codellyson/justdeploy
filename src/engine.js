@@ -6,10 +6,10 @@
 // Deploy builds a new release and re-points `current`. Rollback to a kept release just
 // re-points `current` + restarts — no rebuild. See swap() below for the zero-downtime sequence.
 import { existsSync, mkdirSync, rmSync, symlinkSync, readFileSync, writeFileSync, readlinkSync, readdirSync, statSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import { row, autoEnv } from './table.js';
 import { resolveEnv } from './envref.js';
-import { repoDir, dataDir, SRV, logFile, releasesDir, releaseDir, currentLink } from './paths.js';
+import { repoDir, dataDir, SRV, buildLog, runtimeLog, releasesDir, releaseDir, currentLink } from './paths.js';
 import * as db from './db.js';
 import * as caddy from './caddy.js';
 import * as proc from './proc.js';
@@ -67,11 +67,12 @@ function runDir(name, type, sha) {
 // Fetch and resolve the commit to deploy (latest of origin/HEAD, or an explicit sha).
 async function fetchSha(name, repo, targetSha, authEnv) {
   const dir = repoDir(name);
+  const blog = buildLog(name);
   if (!existsSync(join(dir, '.git'))) {
     mkdirSync(dir, { recursive: true });
-    await run(name, process.cwd(), `git clone ${repo} ${dir}`, authEnv);
+    await run(name, process.cwd(), `git clone ${repo} ${dir}`, authEnv, blog);
   }
-  await run(name, dir, 'git fetch --all --prune && git remote set-head origin --auto', authEnv);
+  await run(name, dir, 'git fetch --all --prune && git remote set-head origin --auto', authEnv, blog);
   return targetSha || capture(dir, ['git', 'rev-parse', 'origin/HEAD']);
 }
 
@@ -84,20 +85,21 @@ async function buildRelease(database, name, type, sha) {
   if (existsSync(marker)) return rel;
   rmSync(rel, { recursive: true, force: true });
   mkdirSync(rel, { recursive: true });
+  const blog = buildLog(name);
   // Clean export of the commit (no .git); deps install fresh inside the release.
-  await run(name, repoDir(name), `git archive ${sha} | tar -x -C ${rel}`);
+  await run(name, repoDir(name), `git archive ${sha} | tar -x -C ${rel}`, undefined, blog);
 
   const r = row(type);
   // Build with the app's env injected — some builds validate/need it (Adonis `node ace build`
   // boots the app; Vite/Next inline VITE_/NEXT_PUBLIC_ vars at build time).
   const app = db.getApp(database, name);
   const buildEnv = appEnv(database, name, type, app.live_port || 4000);
-  if (r.build) await run(name, rel, r.build, buildEnv);
+  if (r.build) await run(name, rel, r.build, buildEnv, blog);
   if (r.postBuild === 'next-standalone-copy') {
     // Only when the app opted into standalone output: it doesn't copy static assets or public/
     // (the classic broken-CSS trap). If there's no standalone dir, we run via `next start`, which
     // serves those itself — so skip the copy rather than fail the build.
-    await run(name, rel, 'if [ -d .next/standalone ]; then cp -r .next/static .next/standalone/.next/static; cp -r public .next/standalone/public 2>/dev/null || true; fi');
+    await run(name, rel, 'if [ -d .next/standalone ]; then cp -r .next/static .next/standalone/.next/static; cp -r public .next/standalone/public 2>/dev/null || true; fi', undefined, blog);
   }
   setupPersistence(name, type, sha, app.persist); // stable data dirs before the app runs
   writeFileSync(marker, sha);
@@ -124,7 +126,7 @@ async function runRelease(database, name, type, sha) {
   const app = db.getApp(database, name);
   if (!app.release_cmd) return;
   const env = appEnv(database, name, type, app.live_port || 4000);
-  await run(name, runDir(name, type, sha), app.release_cmd, env);
+  await run(name, runDir(name, type, sha), app.release_cmd, env, buildLog(name));
 }
 
 // --- container serve model (Railpack image + Docker) ----------------------
@@ -135,7 +137,7 @@ async function archiveSource(name, sha) {
   const marker = join(rel, '.jd-src');
   if (existsSync(marker)) return rel;
   mkdirSync(rel, { recursive: true });
-  await run(name, repoDir(name), `git archive ${sha} | tar -x -C ${rel}`);
+  await run(name, repoDir(name), `git archive ${sha} | tar -x -C ${rel}`, undefined, buildLog(name));
   writeFileSync(marker, sha);
   return rel;
 }
@@ -183,6 +185,9 @@ export async function deploy(database, name, opts = {}) {
   if (!app) throw new Error(`no such app: ${name}`);
   if (!app.repo) throw new Error(`type ${app.type} is not deployable (no repository)`);
   const deployId = db.startDeploy(database, name, now());
+  // Fresh build log per deploy — clone → build → migrations for THIS deploy only.
+  mkdirSync(dirname(buildLog(name)), { recursive: true });
+  writeFileSync(buildLog(name), '');
   let sha = null;
   try {
     const authEnv = await github.cloneAuthEnv(database, app.repo); // App installation token or PAT
@@ -265,9 +270,11 @@ export async function rollback(database, name, sha) {
   }
 }
 
+// Tail of both logs for failure diagnosis — build failures live in build.log, boot/health
+// failures in runtime.log; classify() reads them together.
 function tailLog(name, lines = 60) {
-  try { return readFileSync(logFile(name), 'utf8').split('\n').slice(-lines).join('\n'); }
-  catch { return ''; }
+  const tail = (p) => { try { return readFileSync(p, 'utf8').split('\n').slice(-lines).join('\n'); } catch { return ''; } };
+  return `${tail(buildLog(name))}\n${tail(runtimeLog(name))}`.trim();
 }
 
 // Zero-downtime swap for proxy types, launching from release `sha`. Invariant: someone healthy

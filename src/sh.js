@@ -8,8 +8,8 @@ import { logFile } from './paths.js';
 // (so a live log tail sees a long `npm ci` progress in real time, not all at once at the
 // end). Returns a promise; rejects on non-zero exit. `env` (optional) is merged over the
 // inherited environment — used to pass app env to release commands like migrations.
-export function run(name, cwd, cmd, env) {
-  const lf = logFile(name);
+export function run(name, cwd, cmd, env, logPath) {
+  const lf = logPath || logFile(name); // build-phase callers pass buildLog(name); default = legacy
   mkdirSync(dirname(lf), { recursive: true });
   appendFileSync(lf, `\n$ ${cmd}\n`);
   return new Promise((resolve, reject) => {

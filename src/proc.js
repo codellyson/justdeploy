@@ -2,13 +2,13 @@
 import { spawn } from 'node:child_process';
 import { openSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { logFile } from './paths.js';
+import { runtimeLog } from './paths.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Spawn a detached Node process, append its stdout/stderr to the app log, return its pid.
 export function start(name, { cwd, argv, env }) {
-  const lf = logFile(name);
+  const lf = runtimeLog(name); // the app's live stdout/stderr — separate from build output
   mkdirSync(dirname(lf), { recursive: true });
   const fd = openSync(lf, 'a');
   const child = spawn(argv[0], argv.slice(1), {

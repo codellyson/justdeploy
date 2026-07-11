@@ -36,7 +36,7 @@ import * as s3 from '../src/s3.js';
 import * as github from '../src/github.js';
 import * as setup from '../src/setup.js';
 import { row, TYPES } from '../src/table.js';
-import { logFile, HOME, SRV } from '../src/paths.js';
+import { logFile, buildLog, runtimeLog, HOME, SRV } from '../src/paths.js';
 import * as config from '../src/config.js';
 
 const now = () => new Date().toISOString();
@@ -193,11 +193,21 @@ function cmdLs() {
 
 function cmdLogs(a) {
   const name = a._[0];
-  if (!name) die('usage: justdeploy logs <name> [-f]');
-  const lf = logFile(name);
-  if (!existsSync(lf)) die(`no log yet for ${name}`);
-  const args = a.follow ? ['-n', '200', '-f', lf] : ['-n', '200', lf];
-  spawn('tail', args, { stdio: 'inherit' });
+  if (!name) die('usage: justdeploy logs <name> [--build] [-f]');
+  const tail = (lf) => spawn('tail', a.follow ? ['-n', '200', '-f', lf] : ['-n', '200', lf], { stdio: 'inherit' });
+  // --build → this deploy's build output (clone/build/migrations). Default → the running app's output.
+  if ('build' in a) {
+    const lf = buildLog(name);
+    return existsSync(lf) ? tail(lf) : die(`no build log yet for ${name}`);
+  }
+  const app = db.getApp(db.open(), name);
+  if (app && app.serve === 'container' && app.container) {
+    return spawn('docker', a.follow ? ['logs', '-f', '--tail', '200', app.container] : ['logs', '--tail', '200', app.container], { stdio: 'inherit' });
+  }
+  const lf = runtimeLog(name);
+  if (existsSync(lf)) return tail(lf);
+  if (existsSync(logFile(name))) return tail(logFile(name)); // legacy fallback
+  die(`no runtime log yet for ${name}`);
 }
 
 // Parse a .env block into KEY=VAL strings: skip blanks/# comments, drop an `export ` prefix,
