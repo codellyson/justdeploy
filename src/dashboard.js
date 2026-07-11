@@ -13,6 +13,7 @@ import * as pg from './postgres.js';
 import * as firewall from './firewall.js';
 import * as auth from './auth.js';
 import * as github from './github.js';
+import * as setup from './setup.js';
 import { TABLE, TYPES, row } from './table.js';
 import { PG_REF_FIELDS } from './envref.js';
 import { logFile } from './paths.js';
@@ -328,7 +329,26 @@ async function api(database, req, res, path) {
       // Suggest `{name}.{base}` domains — override with a `base_domain` setting, else the
       // dashboard's own domain (apps are subdomains of it).
       baseDomain: db.getSetting(database, 'base_domain') || db.getSetting(database, 'dashboard_domain') || null,
+      // First-run onboarding state (the setup wizard reads these to know what's left).
+      baseDomainSet: !!db.getSetting(database, 'base_domain'),
+      github: !!db.getSetting(database, 'github_token'),
+      onboardingDismissed: db.getSetting(database, 'onboarding_dismissed') === '1',
     });
+  }
+
+  // Host readiness for the onboarding wizard (Caddy/Docker/Railpack/BuildKit) — same checks as
+  // `justdeploy doctor`, read-only.
+  if (path === '/api/doctor' && req.method === 'GET') {
+    return send(res, 200, await setup.inspect());
+  }
+  if (path === '/api/settings/base-domain' && req.method === 'PUT') {
+    const { domain } = await body(req);
+    db.setSetting(database, 'base_domain', (domain || '').trim());
+    return send(res, 200, { ok: true, baseDomain: (domain || '').trim() });
+  }
+  if (path === '/api/onboarding/dismiss' && req.method === 'POST') {
+    db.setSetting(database, 'onboarding_dismissed', '1');
+    return send(res, 200, { ok: true });
   }
 
   // --- GitHub source connection (Personal Access Token) ---

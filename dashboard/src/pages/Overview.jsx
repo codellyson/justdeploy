@@ -5,6 +5,7 @@ import { useVersion } from '../lib/store';
 import { toast } from '../components/toast';
 import { StatusDot, SoftIcon, Avatar, Mono, Spinner, tone, STATUS_META } from '../components/ui';
 import { Icon } from '../components/icons';
+import { Onboarding } from '../components/Onboarding';
 import { appHealth, shortSha, timeAgo, cx } from '../lib/format';
 
 function Stat({ icon, label, value, tone: t, sub }) {
@@ -94,6 +95,8 @@ export function Overview() {
     return () => { live = false; clearInterval(t); };
   }, [v]);
 
+  const reload = () => api.state().then(setState).catch(() => {});
+
   const derived = useMemo(() => {
     if (!state) return null;
     const apps = state.apps.filter((a) => a.serve !== 'resource');
@@ -128,6 +131,11 @@ export function Overview() {
           {anyFailed ? 'Attention needed' : 'All systems operational'}
         </span>
       </div>
+
+      {/* first-run setup wizard — until dismissed or fully set up */}
+      {!state.onboardingDismissed && !(state.baseDomainSet && state.github && apps.length > 0) && (
+        <Onboarding state={state} onChange={reload} onDeploy={openNew} />
+      )}
 
       {/* stat cards */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">

@@ -31,6 +31,11 @@ export const api = {
   exposeResource: (name, isPublic, allowIps = []) => req(`/resources/${name}/expose`, { method: 'POST', body: { public: isPublic, allowIps } }),
   myIp: () => req('/myip'),
   setDbHost: (host) => req('/settings/public-host', { method: 'PUT', body: { host } }),
+
+  // First-run setup wizard
+  doctor: () => req('/doctor'),
+  setBaseDomain: (domain) => req('/settings/base-domain', { method: 'PUT', body: { domain } }),
+  dismissOnboarding: () => req('/onboarding/dismiss', { method: 'POST' }),
   resourceLogStream: (name) => new EventSource(`/api/resources/${name}/logs/stream`),
 
   // GitHub source connection
