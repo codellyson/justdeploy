@@ -123,6 +123,12 @@ function SettingsBody({ st, bk, reload }) {
       {/* Backups */}
       <Card icon={Icon.Database} title="Backups" subtitle="Snapshot state.db + app data + Postgres to your own S3 / R2 bucket.">
         <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-bg px-3.5 py-2.5 text-xs text-muted">
+            <span>Get an endpoint + keys from your provider:</span>
+            <a href="https://dash.cloudflare.com/?to=/:account/r2/api-tokens" target="_blank" rel="noreferrer" className="font-medium text-accent transition hover:underline">Cloudflare R2 ↗</a>
+            <span className="text-muted/50">·</span>
+            <a href="https://console.aws.amazon.com/iam/home#/security_credentials" target="_blank" rel="noreferrer" className="font-medium text-accent transition hover:underline">AWS S3 (IAM keys) ↗</a>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5"><Label>Endpoint</Label><input value={cfg.endpoint} onChange={(e) => setCfg({ ...cfg, endpoint: e.target.value })} placeholder="https://<acct>.r2.cloudflarestorage.com" className="field py-1.5 font-mono text-[0.8rem]" /></div>
             <div className="flex flex-col gap-1.5"><Label>Bucket</Label><input value={cfg.bucket} onChange={(e) => setCfg({ ...cfg, bucket: e.target.value })} placeholder="my-backups" className="field py-1.5 font-mono text-[0.8rem]" /></div>
