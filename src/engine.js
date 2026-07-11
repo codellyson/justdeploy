@@ -4,7 +4,7 @@
 //   /srv/<name>/current -> releases/<sha>   symlink to the live release
 //   /srv/<name>/data             persists across releases (SQLite, uploads)
 // Deploy builds a new release and re-points `current`. Rollback to a kept release just
-// re-points `current` + restarts — no rebuild. See docs/port-swap.md for the swap sequence.
+// re-points `current` + restarts — no rebuild. See swap() below for the zero-downtime sequence.
 import { existsSync, mkdirSync, rmSync, symlinkSync, readFileSync, writeFileSync, readlinkSync, readdirSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { row, autoEnv } from './table.js';

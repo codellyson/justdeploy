@@ -10,8 +10,8 @@ live build-log streaming · automatic npm peer-conflict recovery (retries `ERESO
 self-heal) · one-command rollback · git-push auto-deploy · S3 / R2 backups · a Vercel-style
 dashboard built on the [justui](https://github.com/codellyson/justui) design system with six themes.
 
-See [CONCEPT.md](CONCEPT.md) for the design, [GAPS.md](GAPS.md) for the honest roadmap, and
-[docs/port-swap.md](docs/port-swap.md) for the one genuinely stateful operation.
+Full install + usage guide: **[justdeploy.kreativekorna.com](https://justdeploy.kreativekorna.com)**
+(source: [docs/index.html](docs/index.html)).
 
 ## Screenshots
 
