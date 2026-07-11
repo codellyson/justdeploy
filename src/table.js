@@ -8,10 +8,29 @@
 //   run:     for proxy, argv to spawn (via node)
 //   postBuild: named fixup run after build (see engine.js)
 
-// Lockfile-aware installs: `npm ci` is fast + deterministic but REQUIRES a lockfile; many
-// repos don't commit one, so fall back to `npm install` (which also generates a lockfile).
-const NPM = 'if [ -f package-lock.json ]; then npm ci; else npm install; fi';
-const NPM_PROD = 'if [ -f package-lock.json ]; then npm ci --omit=dev; else npm install --omit=dev; fi';
+// Lockfile-aware installs with a Vercel/Cloudflare-style ERESOLVE fallback.
+//
+// `npm ci` is fast + deterministic but REQUIRES a lockfile; many repos don't commit one, so we
+// fall back to `npm install` (which also generates one). On top of that: npm 7+ hard-fails on
+// peer-dependency conflicts (ERESOLVE) — common with React 19 + libraries that still cap at
+// React 18. Vercel and Cloudflare Pages transparently retry such installs with
+// `--legacy-peer-deps`; we do the same, so a user never has to add an `.npmrc`. Only the FIRST
+// attempt's output is captured (to a temp file) to detect ERESOLVE; the retry streams live.
+// POSIX sh (run() uses /bin/sh), so no bashisms — the base exit code is stashed in a marker file
+// because dash has no PIPESTATUS.
+function npmInstall(flags = '') {
+  const f = flags ? ` ${flags}` : '';
+  const base = `if [ -f package-lock.json ]; then npm ci${f}; else npm install${f}; fi`;
+  const legacy = `if [ -f package-lock.json ]; then npm ci${f} --legacy-peer-deps; else npm install${f} --legacy-peer-deps; fi`;
+  return `{ ${base}; echo $? >.jd-npm.ec; } 2>&1 | tee .jd-npm.log; ` +
+    `ec=$(cat .jd-npm.ec 2>/dev/null || echo 1); ` +
+    `if [ "$ec" -ne 0 ] && grep -q ERESOLVE .jd-npm.log; then ` +
+      `echo "[justdeploy] peer-dependency conflict — retrying install with --legacy-peer-deps (same as Vercel/Cloudflare)"; ` +
+      `rm -f .jd-npm.log .jd-npm.ec; ${legacy}; ` +
+    `else rm -f .jd-npm.log .jd-npm.ec; [ "$ec" -eq 0 ] || exit "$ec"; fi`;
+}
+const NPM = npmInstall();
+const NPM_PROD = npmInstall('--omit=dev');
 
 export const TABLE = {
   react: {

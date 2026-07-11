@@ -68,12 +68,12 @@ const RULES = [
   },
   {
     match: /ERESOLVE|could not resolve dependency|conflicting peer dependency/i,
-    reason: 'npm refused to install — conflicting peer dependencies',
+    reason: 'A dependency conflict survived even the --legacy-peer-deps retry',
     hint: (text) => {
       // Name the actual blocker: the package in the "Could not resolve dependency" block.
       const pkg = text.match(/Could not resolve dependency:[\s\S]*?peer [^\n]*?from ([\w.@/-]+)/i)?.[1];
-      const who = pkg ? ` (\`${pkg}\` hasn't declared support for your installed React/dependency version yet)` : '';
-      return `A dependency's peer range doesn't match your installed versions${who}. Add an \`.npmrc\` at your repo root with \`legacy-peer-deps=true\`, run \`npm install --legacy-peer-deps\` to refresh package-lock.json, and commit both. JustDeploy runs \`npm ci\`, which reads that \`.npmrc\` — no per-app config needed.`;
+      const who = pkg ? ` (\`${pkg}\`)` : '';
+      return `JustDeploy already retried the install with \`--legacy-peer-deps\` automatically (like Vercel), and it still failed — so this is a genuine conflict npm can't paper over${who}. Fix it in the repo: bump or replace the package that caps your React/dependency version, or as a last resort commit an \`.npmrc\` with \`legacy-peer-deps=true\` **and** try \`--force\` locally to see the real breakage.`;
     },
   },
   {
