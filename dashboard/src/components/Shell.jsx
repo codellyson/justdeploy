@@ -29,6 +29,16 @@ export function Shell({ onSignedOut }) {
         <div className="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4 sm:px-6">
           <Brand />
           <div className="ml-auto flex items-center gap-2">
+            <a
+              href="https://justdeploy.kreativekorna.com"
+              target="_blank"
+              rel="noreferrer"
+              className="hidden items-center gap-1.5 rounded-lg px-2.5 py-2 text-sm font-medium text-muted transition hover:text-primary sm:flex"
+            >
+              <Icon.FileCode className="h-4 w-4" />
+              Docs
+              <Icon.ExternalLink className="h-3 w-3 opacity-60" />
+            </a>
             <ThemeMenu />
             <button
               onClick={() => navigate('/new')}
