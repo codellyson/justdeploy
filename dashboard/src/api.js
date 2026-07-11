@@ -41,6 +41,14 @@ export const api = {
   setBackupConfig: (cfg) => req('/settings/backup', { method: 'PUT', body: cfg }),
   runBackup: (local = false) => req('/backup/run', { method: 'POST', body: { local } }),
   setBackupSchedule: (interval, keep = 7) => req('/backup/schedule', { method: 'POST', body: { interval, keep } }),
+  backups: () => req('/backups'),
+  restoreBackup: (file) => req('/backup/restore', { method: 'POST', body: { file } }),
+  webhookInfo: () => req('/settings/webhook'),
+  enableWebhook: () => req('/settings/webhook', { method: 'POST' }),
+  disableWebhook: () => req('/settings/webhook', { method: 'DELETE' }),
+  host: () => req('/host'),
+  reconcile: () => req('/maintenance/reconcile', { method: 'POST' }),
+  gc: () => req('/maintenance/gc', { method: 'POST' }),
   resourceLogStream: (name) => new EventSource(`/api/resources/${name}/logs/stream`),
 
   // GitHub source connection

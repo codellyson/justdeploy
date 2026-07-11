@@ -1,13 +1,14 @@
 // The dashboard: a small HTTP server serving the SPA + a JSON API over the engine.
 // Runs as its own (systemd) process, as root, so it can drive deploys. Password-protected.
 import { createServer } from 'node:http';
-import { readFileSync, existsSync, statSync, openSync, readSync, closeSync, appendFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, openSync, readSync, closeSync, appendFileSync, writeFileSync, unlinkSync, readdirSync } from 'node:fs';
 import { spawn, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, basename, extname, normalize } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import * as db from './db.js';
 import * as engine from './engine.js';
+import * as caddy from './caddy.js';
 import * as proc from './proc.js';
 import * as pg from './postgres.js';
 import * as firewall from './firewall.js';
@@ -146,8 +147,44 @@ function triggerFromPush(database, p) {
 }
 
 // --- app state for the UI ---------------------------------------------------
-// The CLI entrypoint, for the backup timer's ExecStart (this dashboard runs as root systemd).
-const CLI = `${process.execPath} ${join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'justdeploy')}`;
+// The CLI entrypoint, for the backup timer's ExecStart + the detached restore (dashboard runs as root).
+const CLI_SCRIPT = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'justdeploy');
+const CLI = `${process.execPath} ${CLI_SCRIPT}`;
+
+// Git-push webhook: the payload URL + secret, for the dashboard's Settings > Auto-deploy section.
+function webhookInfo(database) {
+  const secret = db.getSetting(database, 'webhook_secret') || null;
+  const domain = db.getSetting(database, 'dashboard_domain');
+  const base = domain ? `https://${domain}` : null;
+  return {
+    enabled: !!secret, secret,
+    url: base ? `${base}/api/webhook` : '<dashboard-domain>/api/webhook',
+    urlWithSecret: base && secret ? `${base}/api/webhook/${secret}` : null,
+  };
+}
+
+// Local backup archives, newest first.
+function listBackups() {
+  try {
+    return readdirSync(backup.BACKUP_DIR)
+      .filter((f) => f.endsWith('.tar.gz'))
+      .map((f) => { const s = statSync(join(backup.BACKUP_DIR, f)); return { name: f, sizeMB: +(s.size / 1048576).toFixed(2), at: s.mtime.toISOString() }; })
+      .sort((a, b) => (a.at < b.at ? 1 : -1));
+  } catch { return []; }
+}
+
+// Host readiness (doctor) + disk usage + tool versions, for the Settings > Host section.
+async function hostStatus() {
+  const insp = await setup.inspect();
+  let disk = null;
+  try {
+    const cols = execSync('df -Pk /', { encoding: 'utf8' }).trim().split('\n').pop().split(/\s+/);
+    const totalKB = +cols[1], usedKB = +cols[2], freeKB = +cols[3];
+    disk = { totalGB: +(totalKB / 1048576).toFixed(1), usedGB: +(usedKB / 1048576).toFixed(1), freeGB: +(freeKB / 1048576).toFixed(1), pct: Math.round((usedKB / totalKB) * 100) };
+  } catch { /* not linux / no df */ }
+  const ver = (cmd) => { try { return execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split('\n')[0]; } catch { return null; } };
+  return { ...insp, disk, versions: { caddy: ver('caddy version'), docker: ver('docker --version'), railpack: ver('railpack --version') } };
+}
 
 // The S3/R2 remote config, or null if incomplete. (Mirror of the CLI's remoteConfig.)
 function backupRemote(database) {
@@ -441,6 +478,44 @@ async function api(database, req, res, path) {
   if (path === '/api/backup/schedule' && req.method === 'POST') {
     const { interval, keep } = await body(req);
     try { setBackupSchedule(interval, keep); return send(res, 200, { ok: true, schedule: currentSchedule() }); }
+    catch (e) { return send(res, 500, { error: e.message }); }
+  }
+  if (path === '/api/backups' && req.method === 'GET') {
+    return send(res, 200, { backups: listBackups() });
+  }
+  // Restore runs detached — it stops + restarts THIS dashboard service, so it can't run inline.
+  if (path === '/api/backup/restore' && req.method === 'POST') {
+    const { file } = await body(req);
+    const full = join(backup.BACKUP_DIR, basename(file || '')); // basename() prevents path traversal
+    if (!file || !existsSync(full)) return send(res, 404, { error: 'no such backup' });
+    spawn(process.execPath, [CLI_SCRIPT, 'restore', full, '--yes'],
+      { detached: true, stdio: 'ignore', env: { ...process.env, NODE_OPTIONS: '--disable-warning=ExperimentalWarning' } }).unref();
+    return send(res, 200, { ok: true, restarting: true });
+  }
+
+  // --- git-push auto-deploy (webhook) ---
+  if (path === '/api/settings/webhook' && req.method === 'GET') {
+    return send(res, 200, webhookInfo(database));
+  }
+  if (path === '/api/settings/webhook' && req.method === 'POST') { // enable or rotate
+    db.setSetting(database, 'webhook_secret', randomBytes(24).toString('hex'));
+    return send(res, 200, webhookInfo(database));
+  }
+  if (path === '/api/settings/webhook' && req.method === 'DELETE') {
+    db.setSetting(database, 'webhook_secret', '');
+    return send(res, 200, { enabled: false });
+  }
+
+  // --- host status + maintenance actions ---
+  if (path === '/api/host' && req.method === 'GET') {
+    return send(res, 200, await hostStatus());
+  }
+  if (path === '/api/maintenance/reconcile' && req.method === 'POST') {
+    try { await caddy.applyFromDb(database); return send(res, 200, { ok: true }); }
+    catch (e) { return send(res, 500, { error: e.message }); }
+  }
+  if (path === '/api/maintenance/gc' && req.method === 'POST') {
+    try { return send(res, 200, { ok: true, apps: engine.gcContainers(database) }); }
     catch (e) { return send(res, 500, { error: e.message }); }
   }
 

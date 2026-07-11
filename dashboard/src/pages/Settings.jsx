@@ -4,7 +4,28 @@ import { api } from '../api';
 import { toast } from '../components/toast';
 import { Icon } from '../components/icons';
 import { Spinner } from '../components/ui';
-import { cx } from '../lib/format';
+import { cx, timeAgo } from '../lib/format';
+
+function CopyField({ value, secret }) {
+  const [show, setShow] = useState(!secret);
+  return (
+    <div className="flex items-center gap-2">
+      <input readOnly value={show ? (value || '') : '•'.repeat(Math.min((value || '').length, 32))} className="field flex-1 py-1.5 font-mono text-[0.8rem]" />
+      {secret && <button onClick={() => setShow((s) => !s)} title="Reveal" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted transition hover:text-primary">{show ? <Icon.EyeOff className="h-4 w-4" /> : <Icon.Eye className="h-4 w-4" />}</button>}
+      <button onClick={() => { navigator.clipboard?.writeText(value || ''); toast('copied', 'success'); }} title="Copy" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted transition hover:text-primary"><Icon.Copy className="h-4 w-4" /></button>
+    </div>
+  );
+}
+
+function HostRow({ ok, label, detail }) {
+  return (
+    <div className="flex items-center gap-2 text-sm">
+      <span className={cx('h-1.5 w-1.5 shrink-0 rounded-full', ok ? 'bg-success' : 'bg-danger')} />
+      <span className={ok ? 'text-secondary' : 'text-primary'}>{label}</span>
+      {detail && <span className="truncate font-mono text-xs text-muted">{detail}</span>}
+    </div>
+  );
+}
 
 function Card({ icon: Ico, title, subtitle, children }) {
   return (
@@ -27,15 +48,15 @@ function SaveBtn({ busy, onClick, children = 'Save' }) {
 }
 
 export function Settings() {
-  const [st, setSt] = useState(null);
-  const [bk, setBk] = useState(null);
-  const load = () => Promise.all([api.state(), api.backupSettings()]).then(([s, b]) => { setSt(s); setBk(b); });
+  const [d, setD] = useState(null);
+  const load = () => Promise.all([api.state(), api.backupSettings(), api.webhookInfo(), api.backups(), api.host()])
+    .then(([st, bk, wh, bl, host]) => setD({ st, bk, wh, backups: bl.backups, host }));
   useEffect(() => { load().catch(() => {}); }, []);
-  if (!st || !bk) return <Spinner className="mx-auto my-16 h-6 w-6" />;
-  return <SettingsBody st={st} bk={bk} reload={load} />;
+  if (!d) return <Spinner className="mx-auto my-16 h-6 w-6" />;
+  return <SettingsBody {...d} reload={load} />;
 }
 
-function SettingsBody({ st, bk, reload }) {
+function SettingsBody({ st, bk, wh, backups, host, reload }) {
   const [busy, setBusy] = useState('');
   const run = async (key, fn, ok) => {
     setBusy(key);
@@ -63,6 +84,14 @@ function SettingsBody({ st, bk, reload }) {
     const r = await api.runBackup();
     toast(r.uploaded ? `backed up ${r.sizeMB} MB → your bucket` : `backed up ${r.sizeMB} MB locally${r.hasRemote ? '' : ' (no remote configured)'}`, 'success');
   });
+  const restore = (name) => {
+    if (!window.confirm(`Restore ${name}?\n\nThis OVERWRITES current state (db, app data, Postgres) and restarts the dashboard.`)) return;
+    run('restore', async () => {
+      await api.restoreBackup(name);
+      toast('restore started — the dashboard will restart shortly', 'success');
+      setTimeout(() => window.location.reload(), 9000);
+    });
+  };
 
   const SCHEDULES = ['off', 'hourly', 'daily', 'weekly'];
 
@@ -120,6 +149,29 @@ function SettingsBody({ st, bk, reload }) {
         )}
       </Card>
 
+      {/* Auto-deploy (webhook) */}
+      <Card icon={Icon.GitBranch} title="Git-push auto-deploy" subtitle="Push to a repo's default branch → the matching app redeploys.">
+        {wh.enabled ? (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5"><Label>Payload URL</Label><CopyField value={wh.url} /></div>
+            <div className="flex flex-col gap-1.5"><Label>Secret</Label><CopyField value={wh.secret} secret /></div>
+            <div className="rounded-xl border border-border bg-bg px-4 py-3 text-xs text-secondary">
+              <div className="mb-1.5 font-medium text-primary">GitHub → repo Settings → Webhooks → Add webhook</div>
+              Payload URL <span className="text-muted">(above)</span> · Content type <code className="text-accent">application/json</code> · the Secret <span className="text-muted">(above)</span> · "Just the push event". Only default-branch pushes deploy.
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => run('whoff', () => api.disableWebhook(), 'auto-deploy disabled')} className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted transition hover:text-danger">Disable</button>
+              <button onClick={() => run('whrot', () => api.enableWebhook(), 'secret rotated — update it in GitHub')} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3.5 py-2 text-sm font-semibold transition hover:border-muted/50"><Icon.Rollback className="h-4 w-4" /> Rotate secret</button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted">Not enabled. Turn it on to get a signed payload URL to paste into GitHub.</p>
+            <SaveBtn busy={busy === 'whon'} onClick={() => run('whon', () => api.enableWebhook(), 'auto-deploy enabled')}>Enable</SaveBtn>
+          </div>
+        )}
+      </Card>
+
       {/* Backups */}
       <Card icon={Icon.Database} title="Backups" subtitle="Snapshot state.db + app data + Postgres to your own S3 / R2 bucket.">
         <div className="flex flex-col gap-3">
@@ -161,6 +213,43 @@ function SettingsBody({ st, bk, reload }) {
               </div>
               <div className="flex items-center gap-1.5 text-sm text-muted">keep <input type="number" min="1" value={keep} onChange={(e) => setKeep(Math.max(1, Number(e.target.value) || 1))} className="field w-16 py-1 text-center text-sm" /></div>
             </div>
+          </div>
+
+          {backups.length > 0 && (
+            <div className="mt-1 border-t border-border pt-4">
+              <Label>Recent backups</Label>
+              <div className="mt-2 overflow-hidden rounded-xl border border-border">
+                {backups.slice(0, 6).map((b) => (
+                  <div key={b.name} className="flex items-center justify-between gap-3 border-b border-border px-3.5 py-2.5 last:border-b-0">
+                    <div className="min-w-0"><div className="truncate font-mono text-xs">{b.name}</div><div className="text-xs text-muted">{b.sizeMB} MB · {timeAgo(b.at)}</div></div>
+                    <button onClick={() => restore(b.name)} disabled={busy === 'restore'} className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted transition hover:text-primary disabled:opacity-60">Restore</button>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-muted">Restore overwrites current state and restarts the dashboard.</p>
+            </div>
+          )}
+        </div>
+      </Card>
+
+      {/* Host & maintenance */}
+      <Card icon={Icon.Server} title="Host &amp; maintenance" subtitle="Server status and one-click upkeep.">
+        <div className="flex flex-col gap-4">
+          <div className="grid gap-1.5 rounded-xl border border-border bg-bg p-3.5 sm:grid-cols-2">
+            <HostRow ok={host.caddyAdmin} label="Caddy" detail={host.versions?.caddy?.split(' ')[0]} />
+            <HostRow ok={host.docker} label="Docker" detail={host.versions?.docker?.replace('Docker version ', '').split(',')[0]} />
+            <HostRow ok={host.railpack} label="Railpack" detail={host.versions?.railpack?.replace('railpack version ', '')} />
+            <HostRow ok={host.buildkit} label="BuildKit" detail={host.buildkit ? 'running' : 'on first deploy'} />
+          </div>
+          {host.disk && (
+            <div>
+              <div className="mb-1.5 flex items-center justify-between text-xs"><span className="text-muted">Disk</span><span className="font-mono text-secondary">{host.disk.usedGB} / {host.disk.totalGB} GB · {host.disk.freeGB} free</span></div>
+              <div className="h-2 overflow-hidden rounded-full bg-bg-secondary"><div className={cx('h-full rounded-full', host.disk.pct > 85 ? 'bg-warning' : 'bg-accent')} style={{ width: `${host.disk.pct}%` }} /></div>
+            </div>
+          )}
+          <div className="flex flex-wrap justify-end gap-2">
+            <button onClick={() => run('reconcile', () => api.reconcile(), 'proxy config rebuilt from state')} disabled={busy === 'reconcile'} className="rounded-xl border border-border bg-bg-secondary px-3.5 py-2 text-sm font-semibold transition hover:border-muted/50 disabled:opacity-60">{busy === 'reconcile' ? 'Rebuilding…' : 'Rebuild proxy config'}</button>
+            <button onClick={() => run('gc', async () => { const r = await api.gc(); toast(r.apps.length ? `reclaimed — trimmed images for ${r.apps.length} app(s)` : 'nothing to reclaim', 'success'); })} disabled={busy === 'gc'} className="rounded-xl border border-border bg-bg-secondary px-3.5 py-2 text-sm font-semibold transition hover:border-muted/50 disabled:opacity-60">{busy === 'gc' ? 'Reclaiming…' : 'Reclaim disk'}</button>
           </div>
         </div>
       </Card>
