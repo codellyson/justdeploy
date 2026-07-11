@@ -31,7 +31,8 @@ export function generate(apps, dashboard) {
         `\tencode gzip\n` +
         `}`,
       );
-    } else if (a.serve === 'proxy' && a.domain && a.live_port) {
+    } else if ((a.serve === 'proxy' || a.serve === 'container') && a.domain && a.live_port) {
+      // Host process (proxy) and Railpack container both reverse-proxy to a localhost port.
       blocks.push(
         `${a.domain} {\n` +
         `\treverse_proxy 127.0.0.1:${a.live_port}\n` +

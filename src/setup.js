@@ -124,11 +124,35 @@ export async function ensureDockerRunning() {
   return dockerRunning();
 }
 
+// --- Railpack + BuildKit (container builds) -------------------------------
+// Railpack turns any repo into an OCI image; it is BuildKit-native, so we keep a long-lived
+// BuildKit daemon container. Both are only useful alongside Docker.
+export function railpackInstalled() { try { execSync('command -v railpack', { stdio: 'ignore' }); return true; } catch { return false; } }
+
+export function installRailpack() {
+  step('installing Railpack (container build tool)…');
+  sh('curl -sSL https://railpack.com/install.sh | sh');
+}
+
+export function buildkitRunning() {
+  try { return execSync('docker inspect -f "{{.State.Running}}" jd-buildkit 2>/dev/null', { encoding: 'utf8' }).trim() === 'true'; }
+  catch { return false; }
+}
+
+export function ensureBuildkit() {
+  if (buildkitRunning()) return true;
+  try { execSync('docker rm -f jd-buildkit', { stdio: 'ignore' }); } catch { /* none */ }
+  try { execSync('docker run -d --name jd-buildkit --restart unless-stopped --privileged moby/buildkit:latest', { stdio: 'ignore' }); }
+  catch { return false; }
+  return buildkitRunning();
+}
+
 // --- report --------------------------------------------------------------
 // Gather current state without changing anything. Used by both `setup` (before/after) and
 // the `doctor` dry-run.
 export async function inspect() {
   const dockerBin = dockerInstalled();
+  const dockerUp = dockerBin && dockerRunning();
   return {
     node: nodeOk(),
     nodeVersion: process.versions.node,
@@ -136,7 +160,9 @@ export async function inspect() {
     caddyRunning: caddyRunning(),
     caddyAdmin: await caddyAdminOk(),
     dockerInstalled: dockerBin,
-    docker: dockerBin && dockerRunning(), // usable = binary present AND daemon up
+    docker: dockerUp, // usable = binary present AND daemon up
+    railpack: railpackInstalled(),
+    buildkit: dockerUp && buildkitRunning(),
   };
 }
 
@@ -152,6 +178,8 @@ export function printReport(s) {
   console.log(`  ${mark(s.caddyRunning)} Caddy service running`);
   console.log(`  ${mark(s.caddyAdmin)} Caddy admin API (${CADDY_ADMIN})`);
   console.log(`  ${mark(s.docker)} ${dockerLine}`);
+  console.log(`  ${mark(s.railpack)} Railpack (container builds — Next.js & the 'app' type)`);
+  console.log(`  ${mark(s.buildkit)} BuildKit daemon${s.buildkit ? '' : ' (starts on first container deploy)'}`);
   console.log('');
 }
 
@@ -245,6 +273,10 @@ export async function run(opts = {}) {
       console.log('\x1b[33m!\x1b[0m Docker is installed but the daemon would not start. ' +
         'Check: journalctl -xeu docker.service');
     }
+    // Railpack + BuildKit power container builds (Next.js and the catch-all `app` type).
+    if (!railpackInstalled()) installRailpack();
+    else step('Railpack already installed — skipping.');
+    if (dockerRunning()) { step('starting the BuildKit daemon…'); ensureBuildkit(); }
   } else {
     step('skipping Docker (--no-docker); databases will be unavailable.');
   }

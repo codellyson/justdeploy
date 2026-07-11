@@ -66,6 +66,7 @@ export function open(file = STATE_DB) {
     'ALTER TABLE deploys ADD COLUMN hint TEXT',
     'ALTER TABLE resources ADD COLUMN port INTEGER',
     'ALTER TABLE resources ADD COLUMN allow_ips TEXT',
+    'ALTER TABLE apps ADD COLUMN container TEXT',
   ]) { try { db.exec(alter); } catch { /* column already exists */ } }
   return db;
 }
@@ -133,6 +134,10 @@ export function updateAppConfig(db, name, f) {
 export const setPorts = (db, name, { live, pending, pid }) =>
   db.prepare('UPDATE apps SET live_port=?, pending_port=?, live_pid=? WHERE name=?')
     .run(live ?? null, pending ?? null, pid ?? null, name);
+
+// The running container name for container-served apps (parallel to live_pid for host apps).
+export const setContainer = (db, name, container) =>
+  db.prepare('UPDATE apps SET container=? WHERE name=?').run(container ?? null, name);
 
 // Lowest free port at/above PORT_BASE, skipping both live and in-flight (pending) ports.
 export function allocatePort(db) {

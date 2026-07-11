@@ -13,6 +13,7 @@ import { repoDir, dataDir, SRV, logFile, releasesDir, releaseDir, currentLink } 
 import * as db from './db.js';
 import * as caddy from './caddy.js';
 import * as proc from './proc.js';
+import * as container from './container.js';
 import * as github from './github.js';
 import { classify } from './diagnose.js';
 import { run, capture } from './sh.js';
@@ -126,6 +127,54 @@ async function runRelease(database, name, type, sha) {
   await run(name, runDir(name, type, sha), app.release_cmd, env);
 }
 
+// --- container serve model (Railpack image + Docker) ----------------------
+// Export a clean copy of the commit's source for Railpack to build from (no host build here —
+// Railpack does install/build/start inside the image). Cached by SHA like host releases.
+async function archiveSource(name, sha) {
+  const rel = releaseDir(name, sha);
+  const marker = join(rel, '.jd-src');
+  if (existsSync(marker)) return rel;
+  mkdirSync(rel, { recursive: true });
+  await run(name, repoDir(name), `git archive ${sha} | tar -x -C ${rel}`);
+  writeFileSync(marker, sha);
+  return rel;
+}
+
+// persist dirs → bind-mounts onto the stable /srv/<name>/data area (Railpack apps run in /app).
+function containerVolumes(name, persist) {
+  if (!persist) return [];
+  return persist.split(',').map((s) => s.trim()).filter(Boolean).map((p) => {
+    const host = join(dataDir(name), p);
+    mkdirSync(host, { recursive: true });
+    return `${host}:/app/${p}`;
+  });
+}
+
+// Zero-downtime container swap: build the image, start the new container on a fresh port,
+// health-check it, repoint Caddy, then stop the old one. Same invariant as the host swap.
+async function deployContainer(database, name, app, sha) {
+  const src = await archiveSource(name, sha);
+  await container.build(name, name, sha, src);           // railpack build → image tag
+  const port = db.allocatePort(database);
+  const env = appEnv(database, name, app.type, port);    // includes PORT=<port>, ${{ }} resolved
+  const volumes = containerVolumes(name, app.persist);
+  const newC = container.runContainer(name, sha, port, env, volumes);
+
+  const healthy = await proc.healthCheck(port, { path: app.health_path, timeout: app.health_timeout });
+  if (!healthy) {
+    container.stop(newC);
+    throw new Error(`health check failed on port ${port} — the container never answered a healthy response`);
+  }
+
+  const oldC = app.container;
+  db.setPorts(database, name, { live: port, pending: null, pid: null });
+  db.setContainer(database, name, newC);
+  setCurrent(name, sha);
+  await caddy.applyFromDb(database);
+  if (oldC && oldC !== newC) container.stop(oldC);       // drain/stop the previous release
+  container.pruneExcept(name, newC);                     // remove any other stale jd-<app>-* containers
+}
+
 // --- the loop -------------------------------------------------------------
 // opts.sha (optional) pins the commit — used by rollback's rebuild fallback.
 export async function deploy(database, name, opts = {}) {
@@ -137,19 +186,24 @@ export async function deploy(database, name, opts = {}) {
   try {
     const authEnv = github.gitAuthEnv(db.getSetting(database, 'github_token'), app.repo);
     sha = await fetchSha(name, app.repo, opts.sha, authEnv);
-    await buildRelease(database, name, app.type, sha);
-    // Run the release command (e.g. migrations) on EVERY deploy — not just fresh builds. It's
-    // idempotent, and a cached build must still migrate when env/db/release-cmd changed.
-    await runRelease(database, name, app.type, sha);
 
-    if (app.serve === 'static') {
-      setCurrent(name, sha);
-      await caddy.applyFromDb(database); // Caddy root is current/<artifact>
-    } else if (app.serve === 'proxy') {
-      await swap(database, app, sha);
-      setCurrent(name, sha); // reflect the now-running release
+    if (app.serve === 'container') {
+      await deployContainer(database, name, app, sha);
     } else {
-      throw new Error(`type ${app.type} is not deployable (it is a ${app.serve})`);
+      await buildRelease(database, name, app.type, sha);
+      // Run the release command (e.g. migrations) on EVERY deploy — not just fresh builds. It's
+      // idempotent, and a cached build must still migrate when env/db/release-cmd changed.
+      await runRelease(database, name, app.type, sha);
+
+      if (app.serve === 'static') {
+        setCurrent(name, sha);
+        await caddy.applyFromDb(database); // Caddy root is current/<artifact>
+      } else if (app.serve === 'proxy') {
+        await swap(database, app, sha);
+        setCurrent(name, sha); // reflect the now-running release
+      } else {
+        throw new Error(`type ${app.type} is not deployable (it is a ${app.serve})`);
+      }
     }
     pruneReleases(name);
     db.finishDeploy(database, deployId, 'success', sha, null, now());
@@ -168,6 +222,30 @@ export async function deploy(database, name, opts = {}) {
 export async function rollback(database, name, sha) {
   const app = db.getApp(database, name);
   if (!app) throw new Error(`no such app: ${name}`);
+  // Container: instant if the old image is still present, else rebuild that commit.
+  if (app.serve === 'container') {
+    if (!container.imageExists(name, sha)) return deploy(database, name, { sha });
+    const deployId = db.startDeploy(database, name, now());
+    try {
+      const port = db.allocatePort(database);
+      const env = appEnv(database, name, app.type, port);
+      const newC = container.runContainer(name, sha, port, env, containerVolumes(name, app.persist));
+      const healthy = await proc.healthCheck(port, { path: app.health_path, timeout: app.health_timeout });
+      if (!healthy) { container.stop(newC); throw new Error(`health check failed on port ${port}`); }
+      const oldC = app.container;
+      db.setPorts(database, name, { live: port, pending: null, pid: null });
+      db.setContainer(database, name, newC);
+      setCurrent(name, sha);
+      await caddy.applyFromDb(database);
+      if (oldC && oldC !== newC) container.stop(oldC);
+      db.finishDeploy(database, deployId, 'success', sha, 'instant rollback', now());
+      return { sha, instant: true };
+    } catch (e) {
+      const { reason, hint } = classify(e.message, tailLog(name));
+      db.finishDeploy(database, deployId, 'failed', sha, e.message, now(), reason, hint);
+      const err = new Error(e.message); err.reason = reason; err.hint = hint; throw err;
+    }
+  }
   if (!existsSync(join(releaseDir(name, sha), '.jd-built'))) return deploy(database, name, { sha });
 
   const deployId = db.startDeploy(database, name, now());
@@ -230,6 +308,9 @@ export async function destroy(database, name, { keepData = false } = {}) {
 
   if (app.serve === 'proxy' && app.live_pid) {
     await proc.drainAndKill(app.live_pid, 0);
+  } else if (app.serve === 'container') {
+    container.stop(app.container);
+    container.pruneExcept(name, null); // remove any lingering jd-<app>-* containers
   }
   db.removeApp(database, name);
   await caddy.applyFromDb(database);

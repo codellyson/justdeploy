@@ -59,16 +59,15 @@ export const TABLE = {
     // so it's safe on every deploy. Part of the type preset — no per-app configuration needed.
     release: 'node ace migration:run --force',
   },
+  // Container types: Railpack detects the package manager, language runtime, and build/start
+  // commands itself and produces an OCI image — no hand-rolled build/run recipe. `nextjs` gets
+  // its own entry only so the dashboard/CLI can show a Next.js icon and set the right auto-env;
+  // `app` is the catch-all for anything Railpack can build (Node variants, Python, Go, …).
   nextjs: {
-    serve: 'proxy',
-    build: `${NPM} && npm run build`,
-    postBuild: 'next-standalone-copy',
-    cwd: '.',
-    // Prefer the standalone bundle when the app opted into `output: 'standalone'` (smaller, no
-    // node_modules needed); otherwise fall back to `next start`, which works for any Next.js app
-    // as-is (node_modules is present in the release). So a user never has to edit next.config.
-    // `exec` replaces this sh so the tracked pid stays the Node process. PORT comes from autoEnv.
-    run: ['sh', '-c', 'if [ -f .next/standalone/server.js ]; then exec node .next/standalone/server.js; else exec node_modules/.bin/next start -H 0.0.0.0 -p "$PORT"; fi'],
+    serve: 'container',
+  },
+  app: {
+    serve: 'container',
   },
   postgres: {
     serve: 'resource',
@@ -90,7 +89,11 @@ export function autoEnv(type, port) {
     case 'adonis':
       return { HOST: '0.0.0.0', PORT: String(port), NODE_ENV: 'production' };
     case 'nextjs':
+      // Container: must bind 0.0.0.0 so the published port is reachable; PORT is what we publish.
       return { HOSTNAME: '0.0.0.0', PORT: String(port), NODE_ENV: 'production' };
+    case 'app':
+      // Generic container app — the near-universal convention is to listen on $PORT.
+      return { PORT: String(port), NODE_ENV: 'production' };
     default:
       return {};
   }
