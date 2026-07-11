@@ -47,7 +47,8 @@ justdeploy webhook
 
 Prefer to do it by hand? Install Node ≥ 22.5, then `git clone … && npm link`, then run
 `justdeploy setup` (installs + wires up Caddy and Docker) and `justdeploy doctor` to verify.
-Full walkthrough: **[docs/install.html](docs/install.html)**.
+Full walkthrough: **[docs/index.html](docs/index.html)** (also live at
+[justdeploy.kreativekorna.com](https://justdeploy.kreativekorna.com)).
 
 ## Requirements (on the server)
 

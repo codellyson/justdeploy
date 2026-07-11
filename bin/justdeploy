@@ -122,7 +122,9 @@ async function cmdAdd(a) {
   db.upsertApp(database, {
     name, type, domain, repo, serve,
     // The type carries its own release command (Adonis → migrations); --release overrides it.
-    release_cmd: a.release ?? row(type).release ?? null, persist: a.persist ?? null, created_at: now(),
+    release_cmd: a.release ?? row(type).release ?? null, persist: a.persist ?? null,
+    // --dir serves a subfolder of the repo for static apps (e.g. docs/); default is the type's artifact.
+    artifact: a.dir ?? null, created_at: now(),
   });
 
   // Type-specific auto-fill so the documented traps never happen.

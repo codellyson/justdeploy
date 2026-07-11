@@ -18,7 +18,8 @@ export function generate(apps, dashboard) {
   }
   for (const a of apps) {
     if (a.serve === 'static' && a.domain) {
-      const artifact = row(a.type).artifact;
+      // Per-app `--dir` (e.g. serve a repo's docs/ folder) overrides the type's default artifact.
+      const artifact = a.artifact || row(a.type).artifact;
       // Serve the current release (rollback = re-symlink `current`, no reload). Fall back to
       // repo/ for apps not yet migrated to the release layout.
       const base = existsSync(currentLink(a.name)) ? currentLink(a.name) : repoDir(a.name);
