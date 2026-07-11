@@ -19,6 +19,7 @@
 //   justdeploy restore <file> --yes                         restore state/data/pg from a backup
 //   justdeploy dashboard install --domain D [--password P]  set up the web control panel
 //   justdeploy reconcile                                    rebuild Caddy config from the DB
+//   justdeploy gc                                           reclaim disk: trim old container images + build cache
 import { randomBytes } from 'node:crypto';
 import { existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { spawn, execSync } from 'node:child_process';
@@ -156,6 +157,14 @@ async function cmdDeploy(a) {
       process.exit(1);
     }
   }
+}
+
+function cmdGc() {
+  const database = db.open();
+  const names = engine.gcContainers(database);
+  console.log(names.length
+    ? `garbage collected — trimmed old images for ${names.length} container app(s) (${names.join(', ')}) and capped the build cache`
+    : 'nothing to collect — no container apps yet');
 }
 
 function cmdLs() {
@@ -550,6 +559,7 @@ try {
     case 'add': await cmdAdd(a); break;
     case 'deploy': await cmdDeploy(a); break;
     case 'ls': cmdLs(); break;
+    case 'gc': cmdGc(); break;
     case 'logs': cmdLogs(a); break;
     case 'env': cmdEnv(a); break;
     case 'pg': cmdPg(a); break;

@@ -69,3 +69,30 @@ export function pruneExcept(app, keep) {
     if (n !== keep) docker(['rm', '-f', n]);
   }
 }
+
+// --- garbage collection ---------------------------------------------------
+// Each build leaves an ~1 GB image; keep the newest `keepCount` per app (so instant rollback to
+// a recent release still works) plus the current SHA, and delete the rest. Also clears dangling
+// layers left behind by rebuilds. `docker images` lists newest-first.
+export function pruneImages(app, keepSha, keepCount = 3) {
+  const r = docker(['images', `justdeploy/${app}`, '--format', '{{.Tag}}']);
+  if (r.status === 0) {
+    const tags = r.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+    const keep = new Set(tags.slice(0, keepCount));
+    if (keepSha) keep.add(keepSha.slice(0, 12));
+    for (const t of tags) if (!keep.has(t)) docker(['rmi', '-f', `justdeploy/${app}:${t}`]);
+  }
+  docker(['image', 'prune', '-f']);
+}
+
+// Cap the BuildKit build cache so it can't grow without bound (keeps recent layers for fast
+// rebuilds). Best-effort — a missing/older buildctl just no-ops.
+export function pruneBuildCache(keepMB = 3000) {
+  docker(['exec', BUILDKIT, 'buildctl', 'prune', `--keep-storage=${keepMB}`]);
+}
+
+// Everything above, for one app after a deploy: trim its images + cap the shared cache.
+export function gcAfterDeploy(app, currentSha) {
+  pruneImages(app, currentSha);
+  pruneBuildCache();
+}

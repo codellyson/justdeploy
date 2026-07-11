@@ -173,6 +173,7 @@ async function deployContainer(database, name, app, sha) {
   await caddy.applyFromDb(database);
   if (oldC && oldC !== newC) container.stop(oldC);       // drain/stop the previous release
   container.pruneExcept(name, newC);                     // remove any other stale jd-<app>-* containers
+  container.gcAfterDeploy(name, sha);                    // trim old images + cap the build cache
 }
 
 // --- the loop -------------------------------------------------------------
@@ -299,6 +300,15 @@ async function swap(database, app, sha) {
   if (app.live_pid && app.live_pid !== newPid) {
     await proc.drainAndKill(app.live_pid, app.drain_seconds);
   }
+}
+
+// Reclaim disk: for every container app keep only its newest few images (rollback still works),
+// drop dangling layers, and cap the shared BuildKit cache. Safe to run any time.
+export function gcContainers(database) {
+  const apps = db.listApps(database).filter((a) => a.serve === 'container');
+  for (const a of apps) container.pruneImages(a.name, currentRelease(a.name));
+  container.pruneBuildCache();
+  return apps.map((a) => a.name);
 }
 
 // Tear an app down: stop its process, drop it from Caddy, forget it, delete its files.
