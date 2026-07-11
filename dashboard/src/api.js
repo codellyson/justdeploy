@@ -53,6 +53,7 @@ export const api = {
 
   // GitHub source connection
   githubStatus: () => req('/github'),
+  githubAppNew: () => req('/github/app/new'),
   githubConnect: (token) => req('/github', { method: 'POST', body: { token } }),
   githubDisconnect: () => req('/github', { method: 'DELETE' }),
   githubRepos: () => req('/github/repos'),
@@ -61,3 +62,19 @@ export const api = {
   // SSE — returns the EventSource so the caller can close it.
   stream: (name) => new EventSource(`/api/apps/${name}/stream`),
 };
+
+// Launch the GitHub App create flow: fetch the pre-filled manifest, then POST it to GitHub as a
+// top-level form navigation (GitHub shows "Create GitHub App", then redirects back to our callback).
+export async function connectGithubApp() {
+  const { action, manifest } = await api.githubAppNew();
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = action;
+  const input = document.createElement('input');
+  input.type = 'hidden';
+  input.name = 'manifest';
+  input.value = JSON.stringify(manifest);
+  form.appendChild(input);
+  document.body.appendChild(form);
+  form.submit();
+}

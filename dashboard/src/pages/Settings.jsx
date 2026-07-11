@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api';
+import { api, connectGithubApp } from '../api';
 import { toast } from '../components/toast';
 import { Icon } from '../components/icons';
 import { Spinner } from '../components/ui';
@@ -49,14 +49,14 @@ function SaveBtn({ busy, onClick, children = 'Save' }) {
 
 export function Settings() {
   const [d, setD] = useState(null);
-  const load = () => Promise.all([api.state(), api.backupSettings(), api.webhookInfo(), api.backups(), api.host()])
-    .then(([st, bk, wh, bl, host]) => setD({ st, bk, wh, backups: bl.backups, host }));
+  const load = () => Promise.all([api.state(), api.backupSettings(), api.webhookInfo(), api.backups(), api.host(), api.githubStatus()])
+    .then(([st, bk, wh, bl, host, gh]) => setD({ st, bk, wh, backups: bl.backups, host, gh }));
   useEffect(() => { load().catch(() => {}); }, []);
   if (!d) return <Spinner className="mx-auto my-16 h-6 w-6" />;
   return <SettingsBody {...d} reload={load} />;
 }
 
-function SettingsBody({ st, bk, wh, backups, host, reload }) {
+function SettingsBody({ st, bk, wh, backups, host, gh, reload }) {
   const [busy, setBusy] = useState('');
   const run = async (key, fn, ok) => {
     setBusy(key);
@@ -134,17 +134,41 @@ function SettingsBody({ st, bk, wh, backups, host, reload }) {
       </Card>
 
       {/* GitHub */}
-      <Card icon={Icon.Github} title="GitHub" subtitle="Deploy private repos and auto-detect frameworks.">
-        {st.github ? (
+      <Card icon={Icon.Github} title="GitHub" subtitle="Deploy private repos and auto-detect frameworks — install once, all repos.">
+        {gh.mode === 'app' ? (
+          <div className="flex flex-col gap-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-bg px-4 py-3">
+              <span className="flex items-center gap-2 text-sm">
+                {gh.installed
+                  ? <><Icon.Check className="h-4 w-4 text-success" /> Connected via <b className="font-semibold">GitHub App</b> — private repos deploy, push auto-deploys.</>
+                  : <><Icon.Alert className="h-4 w-4 text-warning" /> App created — <b className="font-semibold">install it</b> to pick repos.</>}
+              </span>
+              <div className="flex items-center gap-2">
+                {gh.installUrl && <a href={gh.installUrl} target="_blank" rel="noreferrer" className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium transition hover:border-muted/50">{gh.installed ? 'Manage repos ↗' : 'Install ↗'}</a>}
+                <button onClick={() => run('ghdis', () => api.githubDisconnect(), 'GitHub disconnected')} className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted transition hover:text-danger">Disconnect</button>
+              </div>
+            </div>
+          </div>
+        ) : gh.mode === 'pat' ? (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-bg px-4 py-3">
-            <span className="flex items-center gap-2 text-sm"><Icon.Check className="h-4 w-4 text-success" /> Connected{st.githubLogin ? <> as <b className="font-semibold">{st.githubLogin}</b></> : ''}</span>
-            <button onClick={() => run('ghdis', () => api.githubDisconnect(), 'GitHub disconnected')} className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted transition hover:text-danger">Disconnect</button>
+            <span className="flex items-center gap-2 text-sm"><Icon.Check className="h-4 w-4 text-success" /> Connected as <b className="font-semibold">{gh.login}</b> <span className="text-xs text-muted">(access token)</span></span>
+            <div className="flex items-center gap-2">
+              <button onClick={connectGithubApp} className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-accent transition hover:border-accent/50">Upgrade to App</button>
+              <button onClick={() => run('ghdis', () => api.githubDisconnect(), 'GitHub disconnected')} className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-muted transition hover:text-danger">Disconnect</button>
+            </div>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-2">
-            <input value={token} onChange={(e) => setToken(e.target.value)} type="password" placeholder="ghp_… (repo scope)" className="field flex-1 basis-56 py-1.5 font-mono text-sm" />
-            <a href="https://github.com/settings/tokens/new?scopes=repo&description=JustDeploy" target="_blank" rel="noreferrer" className="text-xs text-accent transition hover:underline">create token ↗</a>
-            <button onClick={() => token.trim() && run('ghcon', () => api.githubConnect(token.trim()), 'GitHub connected').then(() => setToken(''))} disabled={busy === 'ghcon'} className="rounded-xl bg-accent px-3.5 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06] disabled:opacity-60">Connect</button>
+          <div className="flex flex-col gap-3">
+            <button onClick={connectGithubApp} className="flex w-fit items-center gap-2 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"><Icon.Github className="h-4 w-4" /> Connect GitHub App</button>
+            <p className="text-xs text-muted">One click creates the App, then you pick which repos. No per-repo webhooks, no access token to manage.</p>
+            <details className="text-sm">
+              <summary className="cursor-pointer text-xs text-muted transition hover:text-primary">or connect with a personal access token</summary>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input value={token} onChange={(e) => setToken(e.target.value)} type="password" placeholder="ghp_… (repo scope)" className="field flex-1 basis-56 py-1.5 font-mono text-sm" />
+                <a href="https://github.com/settings/tokens/new?scopes=repo&description=JustDeploy" target="_blank" rel="noreferrer" className="text-xs text-accent transition hover:underline">create token ↗</a>
+                <button onClick={() => token.trim() && run('ghcon', () => api.githubConnect(token.trim()), 'GitHub connected').then(() => setToken(''))} disabled={busy === 'ghcon'} className="rounded-xl border border-border bg-bg-secondary px-3.5 py-2 text-sm font-semibold transition hover:border-muted/50 disabled:opacity-60">Connect</button>
+              </div>
+            </details>
           </div>
         )}
       </Card>

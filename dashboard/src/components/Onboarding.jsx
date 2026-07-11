@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api';
+import { api, connectGithubApp } from '../api';
 import { toast } from './toast';
 import { Icon } from './icons';
 import { cx } from '../lib/format';
@@ -118,12 +118,18 @@ export function Onboarding({ state, onChange, onDeploy }) {
 
         {/* 3. connect GitHub */}
         <StepShell n={3} done={steps.github} title="Connect GitHub"
-          subtitle={steps.github ? 'Connected — private repos and framework detection work.' : 'Deploy private repos and auto-detect the framework. Paste a Personal Access Token (repo scope).'}>
-          <div className="flex flex-wrap items-center gap-2">
-            <input value={token} onChange={(e) => setToken(e.target.value)} type="password" placeholder="ghp_… (repo scope)"
-              className="field w-full flex-1 basis-56 py-1.5 font-mono text-sm" onKeyDown={(e) => e.key === 'Enter' && connectGithub()} />
-            <a href="https://github.com/settings/tokens/new?scopes=repo&description=JustDeploy" target="_blank" rel="noreferrer" className="text-xs text-accent transition hover:underline">create token ↗</a>
-            <button onClick={connectGithub} disabled={busy === 'github'} className="rounded-xl border border-border bg-bg-secondary px-3.5 py-2 text-sm font-semibold transition hover:border-muted/50 disabled:opacity-60">{busy === 'github' ? 'Connecting…' : 'Connect'}</button>
+          subtitle={steps.github ? 'Connected — private repos and push-to-deploy work.' : 'Install once, and every repo you pick deploys — no per-repo webhooks, no token to manage.'}>
+          <div className="flex flex-col gap-2">
+            <button onClick={connectGithubApp} className="flex w-fit items-center gap-2 rounded-xl bg-accent px-3.5 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"><Icon.Github className="h-4 w-4" /> Connect GitHub App</button>
+            <details>
+              <summary className="cursor-pointer text-xs text-muted transition hover:text-primary">or use a personal access token</summary>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input value={token} onChange={(e) => setToken(e.target.value)} type="password" placeholder="ghp_… (repo scope)"
+                  className="field w-full flex-1 basis-56 py-1.5 font-mono text-sm" onKeyDown={(e) => e.key === 'Enter' && connectGithub()} />
+                <a href="https://github.com/settings/tokens/new?scopes=repo&description=JustDeploy" target="_blank" rel="noreferrer" className="text-xs text-accent transition hover:underline">create token ↗</a>
+                <button onClick={connectGithub} disabled={busy === 'github'} className="rounded-xl border border-border bg-bg-secondary px-3.5 py-2 text-sm font-semibold transition hover:border-muted/50 disabled:opacity-60">{busy === 'github' ? 'Connecting…' : 'Connect'}</button>
+              </div>
+            </details>
           </div>
         </StepShell>
 

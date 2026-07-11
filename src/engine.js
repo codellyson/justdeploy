@@ -185,7 +185,7 @@ export async function deploy(database, name, opts = {}) {
   const deployId = db.startDeploy(database, name, now());
   let sha = null;
   try {
-    const authEnv = github.gitAuthEnv(db.getSetting(database, 'github_token'), app.repo);
+    const authEnv = await github.cloneAuthEnv(database, app.repo); // App installation token or PAT
     sha = await fetchSha(name, app.repo, opts.sha, authEnv);
 
     if (app.serve === 'container') {
