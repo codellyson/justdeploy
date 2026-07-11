@@ -1,10 +1,10 @@
 // The dashboard: a small HTTP server serving the SPA + a JSON API over the engine.
 // Runs as its own (systemd) process, as root, so it can drive deploys. Password-protected.
 import { createServer } from 'node:http';
-import { readFileSync, existsSync, statSync, openSync, readSync, closeSync, appendFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { readFileSync, existsSync, statSync, openSync, readSync, closeSync, appendFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { spawn, execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, join, extname, normalize } from 'node:path';
+import { dirname, join, basename, extname, normalize } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import * as db from './db.js';
 import * as engine from './engine.js';
@@ -14,6 +14,8 @@ import * as firewall from './firewall.js';
 import * as auth from './auth.js';
 import * as github from './github.js';
 import * as setup from './setup.js';
+import * as backup from './backup.js';
+import * as s3 from './s3.js';
 import { TABLE, TYPES, row } from './table.js';
 import { PG_REF_FIELDS } from './envref.js';
 import { logFile } from './paths.js';
@@ -144,6 +146,56 @@ function triggerFromPush(database, p) {
 }
 
 // --- app state for the UI ---------------------------------------------------
+// The CLI entrypoint, for the backup timer's ExecStart (this dashboard runs as root systemd).
+const CLI = `${process.execPath} ${join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'justdeploy')}`;
+
+// The S3/R2 remote config, or null if incomplete. (Mirror of the CLI's remoteConfig.)
+function backupRemote(database) {
+  const c = {
+    endpoint: db.getSetting(database, 'backup_endpoint'), bucket: db.getSetting(database, 'backup_bucket'),
+    region: db.getSetting(database, 'backup_region') || 'auto', accessKey: db.getSetting(database, 'backup_access_key'),
+    secretKey: db.getSetting(database, 'backup_secret_key'), prefix: db.getSetting(database, 'backup_prefix') || '',
+  };
+  return (c.endpoint && c.bucket && c.accessKey && c.secretKey) ? c : null;
+}
+
+// Backup settings for the UI — the secret is never sent, only whether one is stored.
+function backupSettings(database) {
+  return {
+    endpoint: db.getSetting(database, 'backup_endpoint') || '', bucket: db.getSetting(database, 'backup_bucket') || '',
+    region: db.getSetting(database, 'backup_region') || '', prefix: db.getSetting(database, 'backup_prefix') || '',
+    accessKey: db.getSetting(database, 'backup_access_key') || '', hasSecret: !!db.getSetting(database, 'backup_secret_key'),
+    configured: !!backupRemote(database), schedule: currentSchedule(),
+  };
+}
+
+// 'off' | 'hourly' | 'daily' | 'weekly' | '<raw OnCalendar>' — read from the installed timer.
+function currentSchedule() {
+  try {
+    if (execSync('systemctl is-enabled justdeploy-backup.timer', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() !== 'enabled') return 'off';
+    const cal = execSync('systemctl cat justdeploy-backup.timer', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+      .split('\n').find((l) => l.startsWith('OnCalendar='));
+    return cal ? cal.split('=')[1].trim() : 'on';
+  } catch { return 'off'; }
+}
+
+// Install / update / remove the systemd backup timer at the chosen interval (root only).
+function setBackupSchedule(interval, keep = 7) {
+  const svc = '/etc/systemd/system/justdeploy-backup.service';
+  const tmr = '/etc/systemd/system/justdeploy-backup.timer';
+  if (!interval || interval === 'off') {
+    try { execSync('systemctl disable --now justdeploy-backup.timer', { stdio: 'ignore' }); } catch { /* not installed */ }
+    for (const f of [svc, tmr]) { try { if (existsSync(f)) unlinkSync(f); } catch { /* ignore */ } }
+    try { execSync('systemctl daemon-reload', { stdio: 'ignore' }); } catch { /* ignore */ }
+    return;
+  }
+  const cal = ['hourly', 'daily', 'weekly'].includes(interval) ? interval : 'daily';
+  writeFileSync(svc, `[Unit]\nDescription=JustDeploy backup\n\n[Service]\nType=oneshot\nEnvironment=NODE_OPTIONS=--disable-warning=ExperimentalWarning\nExecStart=${CLI} backup --keep ${keep}\n`);
+  writeFileSync(tmr, `[Unit]\nDescription=JustDeploy backup timer\n\n[Timer]\nOnCalendar=${cal}\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n`);
+  execSync('systemctl daemon-reload');
+  execSync('systemctl enable --now justdeploy-backup.timer');
+}
+
 function appView(database, a) {
   const last = db.latestDeploy(database, a.name);
   return {
@@ -331,7 +383,9 @@ async function api(database, req, res, path) {
       baseDomain: db.getSetting(database, 'base_domain') || db.getSetting(database, 'dashboard_domain') || null,
       // First-run onboarding state (the setup wizard reads these to know what's left).
       baseDomainSet: !!db.getSetting(database, 'base_domain'),
+      publicHost: db.getSetting(database, 'public_host') || '',
       github: !!db.getSetting(database, 'github_token'),
+      githubLogin: db.getSetting(database, 'github_login') || null,
       onboardingDismissed: db.getSetting(database, 'onboarding_dismissed') === '1',
     });
   }
@@ -349,6 +403,45 @@ async function api(database, req, res, path) {
   if (path === '/api/onboarding/dismiss' && req.method === 'POST') {
     db.setSetting(database, 'onboarding_dismissed', '1');
     return send(res, 200, { ok: true });
+  }
+
+  // --- change the admin password (verify current, then set) ---
+  if (path === '/api/settings/password' && req.method === 'PUT') {
+    const { current, next } = await body(req);
+    if (!next || String(next).length < 8) return send(res, 400, { error: 'new password must be at least 8 characters' });
+    if (!auth.checkAdmin(database, current || '')) return send(res, 403, { error: 'current password is incorrect' });
+    auth.setAdminPassword(database, String(next));
+    return send(res, 200, { ok: true });
+  }
+
+  // --- off-box backups: S3/R2 config, run-now, and the systemd schedule ---
+  if (path === '/api/settings/backup' && req.method === 'GET') {
+    return send(res, 200, backupSettings(database));
+  }
+  if (path === '/api/settings/backup' && req.method === 'PUT') {
+    const b = await body(req);
+    const map = { endpoint: 'backup_endpoint', bucket: 'backup_bucket', region: 'backup_region', accessKey: 'backup_access_key', secretKey: 'backup_secret_key', prefix: 'backup_prefix' };
+    for (const [k, key] of Object.entries(map)) {
+      if (b[k] === undefined) continue;
+      if (k === 'secretKey' && b[k] === '') continue; // blank secret = keep existing (it's masked)
+      db.setSetting(database, key, String(b[k]).trim());
+    }
+    return send(res, 200, backupSettings(database));
+  }
+  if (path === '/api/backup/run' && req.method === 'POST') {
+    const { local } = await body(req).catch(() => ({}));
+    try {
+      const r = backup.create(database, {});
+      let uploaded = false;
+      const remote = backupRemote(database);
+      if (!local && remote) { await s3.putObject(remote, basename(r.archive), readFileSync(r.archive)); uploaded = true; }
+      return send(res, 200, { ok: true, archive: basename(r.archive), sizeMB: +(r.size / 1048576).toFixed(2), uploaded, hasRemote: !!remote });
+    } catch (e) { return send(res, 500, { error: e.message }); }
+  }
+  if (path === '/api/backup/schedule' && req.method === 'POST') {
+    const { interval, keep } = await body(req);
+    try { setBackupSchedule(interval, keep); return send(res, 200, { ok: true, schedule: currentSchedule() }); }
+    catch (e) { return send(res, 500, { error: e.message }); }
   }
 
   // --- GitHub source connection (Personal Access Token) ---

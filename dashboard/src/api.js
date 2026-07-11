@@ -32,10 +32,15 @@ export const api = {
   myIp: () => req('/myip'),
   setDbHost: (host) => req('/settings/public-host', { method: 'PUT', body: { host } }),
 
-  // First-run setup wizard
+  // First-run setup wizard + settings
   doctor: () => req('/doctor'),
   setBaseDomain: (domain) => req('/settings/base-domain', { method: 'PUT', body: { domain } }),
   dismissOnboarding: () => req('/onboarding/dismiss', { method: 'POST' }),
+  setPassword: (current, next) => req('/settings/password', { method: 'PUT', body: { current, next } }),
+  backupSettings: () => req('/settings/backup'),
+  setBackupConfig: (cfg) => req('/settings/backup', { method: 'PUT', body: cfg }),
+  runBackup: (local = false) => req('/backup/run', { method: 'POST', body: { local } }),
+  setBackupSchedule: (interval, keep = 7) => req('/backup/schedule', { method: 'POST', body: { interval, keep } }),
   resourceLogStream: (name) => new EventSource(`/api/resources/${name}/logs/stream`),
 
   // GitHub source connection

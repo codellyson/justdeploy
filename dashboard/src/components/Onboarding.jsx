@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api';
 import { toast } from './toast';
 import { Icon } from './icons';
@@ -85,7 +86,8 @@ export function Onboarding({ state, onChange, onDeploy }) {
           <div className="hidden h-1.5 w-28 overflow-hidden rounded-full surface-2 sm:block">
             <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${(doneCount / 4) * 100}%` }} />
           </div>
-          <button onClick={dismiss} className="text-xs text-muted transition hover:text-primary">{allDone ? 'Dismiss' : 'Skip for now'}</button>
+          <Link to="/settings" className="text-xs text-accent transition hover:underline">All settings →</Link>
+          <button onClick={dismiss} className="text-xs text-muted transition hover:text-primary">{allDone ? 'Dismiss' : 'Skip'}</button>
         </div>
       </div>
 

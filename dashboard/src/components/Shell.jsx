@@ -41,6 +41,13 @@ export function Shell({ onSignedOut }) {
             </a>
             <ThemeMenu />
             <button
+              onClick={() => navigate('/settings')}
+              title="Settings"
+              className="grid h-9 w-9 place-items-center rounded-lg text-muted transition hover:bg-bg-secondary hover:text-primary"
+            >
+              <Icon.Settings className="h-[1.05rem] w-[1.05rem]" />
+            </button>
+            <button
               onClick={() => navigate('/new')}
               className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"
             >
