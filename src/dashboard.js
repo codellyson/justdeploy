@@ -600,8 +600,8 @@ async function api(database, req, res, path) {
     return send(res, 200, { ok: true });
   }
   if (path === '/api/github/repos' && req.method === 'GET') {
-    try { const token = await github.activeToken(database); if (!token) return send(res, 400, { error: 'not connected' }); return send(res, 200, { repos: await github.listRepos(token) }); }
-    catch (e) { return send(res, 502, { error: e.message }); }
+    try { return send(res, 200, { repos: await github.reposFor(database) }); }
+    catch (e) { return send(res, e.message === 'not connected' ? 400 : 502, { error: e.message }); }
   }
   if (path === '/api/github/detect' && req.method === 'GET') {
     const repo = new URL(req.url, 'http://x').searchParams.get('repo');

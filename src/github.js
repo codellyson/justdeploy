@@ -150,6 +150,28 @@ export async function cloneAuthEnv(database, repo) {
   return gitAuthEnv(await activeToken(database), repo);
 }
 
+// List deployable repos for the picker. App installation tokens CANNOT call /user/repos (that's
+// a user endpoint → 403); they must use /installation/repositories. PAT uses /user/repos.
+export async function reposFor(database) {
+  if (db.getSetting(database, 'gh_app_id') && db.getSetting(database, 'gh_app_pem')) {
+    const token = await activeToken(database);
+    const out = [];
+    for (let page = 1; page <= 6; page++) {
+      const r = await fetch(`${API}/installation/repositories?per_page=100&page=${page}`, { headers: headers(token) });
+      if (!r.ok) throw new Error(`GitHub error (${r.status})`);
+      const j = await r.json();
+      for (const x of j.repositories || []) {
+        out.push({ full_name: x.full_name, clone_url: x.clone_url, private: x.private, default_branch: x.default_branch, pushed_at: x.pushed_at });
+      }
+      if ((j.repositories || []).length < 100) break;
+    }
+    return out.sort((a, b) => (String(a.pushed_at) < String(b.pushed_at) ? 1 : -1)); // newest push first
+  }
+  const pat = db.getSetting(database, 'github_token');
+  if (!pat) throw new Error('not connected');
+  return listRepos(pat);
+}
+
 // Connection status for the dashboard: app | pat | none.
 export function connection(database) {
   if (db.getSetting(database, 'gh_app_id')) {
