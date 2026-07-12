@@ -91,9 +91,7 @@ export function row(type) {
 export function autoEnv(type, port) {
   switch (type) {
     case 'adonis':
-      // The Adonis web starter validates these at boot. Sensible, dependency-free defaults so the
-      // app runs out of the box; the user's own env (a different session driver, etc.) overrides.
-      return { HOST: '0.0.0.0', PORT: String(port), NODE_ENV: 'production', LOG_LEVEL: 'info', SESSION_DRIVER: 'cookie' };
+      return { HOST: '0.0.0.0', PORT: String(port), NODE_ENV: 'production' };
     case 'nextjs':
       // Container: must bind 0.0.0.0 so the published port is reachable; PORT is what we publish.
       return { HOSTNAME: '0.0.0.0', PORT: String(port), NODE_ENV: 'production' };
