@@ -36,6 +36,7 @@ export default function App() {
               <Route path="/new" element={<NewProject />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/canvas" element={<Canvas />} />
+              <Route path="/projects/:name" element={<Canvas />} />
               <Route path="/apps/:name" element={<AppDetail />} />
               <Route path="/db/:name" element={<DatabaseDetail />} />
               <Route path="*" element={<Overview />} />

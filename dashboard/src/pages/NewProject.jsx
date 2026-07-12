@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
 import { invalidate } from '../lib/store';
 import { toast } from '../components/toast';
@@ -19,6 +19,8 @@ function StepDot({ n, active }) {
 
 export function NewProject() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const presetProject = params.get('project') || ''; // set when adding a service to a project
   const [type, setType] = useState(null);
   const [f, setF] = useState({});
   const [touched, setTouched] = useState({ name: false, domain: false, release: false });
@@ -64,7 +66,7 @@ export function NewProject() {
   const submit = async () => {
     setErr(''); setBusy(true);
     try {
-      const body = { type, name: (f.name || '').trim() };
+      const body = { type, name: (f.name || '').trim(), project: (f.project ?? presetProject).trim() };
       if (needsRepoDomain(type)) { body.repo = (f.repo || '').trim(); body.domain = (f.domain || '').trim(); }
       if (PROXY.includes(type)) { body.release = (f.release || '').trim(); body.persist = (f.persist || '').trim(); }
       const r = await api.createApp(body);
@@ -110,8 +112,12 @@ export function NewProject() {
         <div className="surface flex flex-col gap-4 p-5">
           <div className="flex flex-wrap gap-4">
             <div className="flex flex-1 basis-52 flex-col gap-1.5">
-              <label className="label-tiny">Project name</label>
+              <label className="label-tiny">Service name</label>
               <input value={f.name || ''} onChange={onName} placeholder="my-new-app" className="field" />
+            </div>
+            <div className="flex flex-1 basis-52 flex-col gap-1.5">
+              <label className="label-tiny">Project {presetProject ? '' : <span className="font-normal normal-case tracking-normal text-muted/70">— groups related services</span>}</label>
+              <input value={f.project ?? presetProject} onChange={set('project')} placeholder="default" className="field" />
             </div>
           </div>
 

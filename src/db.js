@@ -57,6 +57,10 @@ export function open(file = STATE_DB) {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS projects (
+      name       TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL
+    );
   `);
   // Migrations for dbs created before these columns existed (ALTER throws if present).
   for (const alter of [
@@ -68,9 +72,32 @@ export function open(file = STATE_DB) {
     'ALTER TABLE resources ADD COLUMN allow_ips TEXT',
     'ALTER TABLE apps ADD COLUMN container TEXT',
     'ALTER TABLE apps ADD COLUMN artifact TEXT',
+    'ALTER TABLE apps ADD COLUMN project TEXT',
+    'ALTER TABLE resources ADD COLUMN project TEXT',
   ]) { try { db.exec(alter); } catch { /* column already exists */ } }
+  // Every service belongs to a project; ungrouped ones (and older dbs) land in 'default'.
+  db.prepare("INSERT INTO projects (name, created_at) VALUES ('default', ?) ON CONFLICT(name) DO NOTHING")
+    .run(new Date().toISOString());
+  db.exec("UPDATE apps SET project='default' WHERE project IS NULL OR project=''");
+  db.exec("UPDATE resources SET project='default' WHERE project IS NULL OR project=''");
   return db;
 }
+
+// --- projects --------------------------------------------------------------
+export const listProjects = (db) => db.prepare('SELECT * FROM projects ORDER BY created_at').all();
+export const getProject = (db, name) => db.prepare('SELECT * FROM projects WHERE name=?').get(name);
+export const createProject = (db, name, at) =>
+  db.prepare('INSERT INTO projects (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING').run(name, at);
+export function removeProject(db, name) {
+  // Reassign the project's services to 'default', then drop it (never delete apps/dbs here).
+  db.prepare("UPDATE apps SET project='default' WHERE project=?").run(name);
+  db.prepare("UPDATE resources SET project='default' WHERE project=?").run(name);
+  db.prepare("DELETE FROM projects WHERE name=? AND name!='default'").run(name);
+}
+export const setAppProject = (db, name, project) =>
+  db.prepare('UPDATE apps SET project=? WHERE name=?').run(project, name);
+export const setResourceProject = (db, name, project) =>
+  db.prepare('UPDATE resources SET project=? WHERE name=?').run(project, name);
 
 export const getSetting = (db, key) =>
   db.prepare('SELECT value FROM settings WHERE key=?').get(key)?.value;
@@ -106,19 +133,20 @@ export const listApps = (db) =>
 
 export function upsertApp(db, a) {
   db.prepare(`
-    INSERT INTO apps (name, type, domain, repo, serve, health_path, health_timeout, drain_seconds, release_cmd, persist, artifact, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO apps (name, type, domain, repo, serve, health_path, health_timeout, drain_seconds, release_cmd, persist, artifact, project, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET
       type=excluded.type, domain=excluded.domain, repo=excluded.repo, serve=excluded.serve,
       health_path=excluded.health_path, health_timeout=excluded.health_timeout,
       drain_seconds=excluded.drain_seconds,
       release_cmd=coalesce(excluded.release_cmd, apps.release_cmd),
       persist=coalesce(excluded.persist, apps.persist),
-      artifact=coalesce(excluded.artifact, apps.artifact)
+      artifact=coalesce(excluded.artifact, apps.artifact),
+      project=coalesce(excluded.project, apps.project)
   `).run(
     a.name, a.type, a.domain ?? null, a.repo ?? null, a.serve,
     a.health_path ?? '/', a.health_timeout ?? 30, a.drain_seconds ?? 10,
-    a.release_cmd ?? null, a.persist ?? null, a.artifact ?? null, a.created_at,
+    a.release_cmd ?? null, a.persist ?? null, a.artifact ?? null, a.project ?? 'default', a.created_at,
   );
 }
 
@@ -185,9 +213,9 @@ export const finishDeploy = (db, id, status, sha, message, at, reason = null, hi
   db.prepare('UPDATE deploys SET status=?, sha=?, message=?, reason=?, hint=?, finished_at=? WHERE id=?')
     .run(status, sha ?? null, message ?? null, reason, hint, at, id);
 
-export const addResource = (db, name, kind, conn, port, at) =>
-  db.prepare('INSERT INTO resources (name, kind, conn, port, created_at) VALUES (?, ?, ?, ?, ?) ' +
-    'ON CONFLICT(name) DO UPDATE SET conn=excluded.conn, port=excluded.port').run(name, kind, conn, port ?? null, at);
+export const addResource = (db, name, kind, conn, port, at, project = 'default') =>
+  db.prepare('INSERT INTO resources (name, kind, conn, port, project, created_at) VALUES (?, ?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(name) DO UPDATE SET conn=excluded.conn, port=excluded.port').run(name, kind, conn, port ?? null, project, at);
 
 // Lowest free Postgres host port at/above 5433 (skips ones already in use by a resource).
 export function allocatePgPort(db) {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api';
 import { TypeIcon, Icon } from '../components/icons';
 import { StatusDot, Spinner } from '../components/ui';
@@ -43,6 +43,7 @@ function edgePath(a, b) {
 
 export function Canvas() {
   const navigate = useNavigate();
+  const { name: project } = useParams(); // set on /projects/:name, undefined on /canvas
   const [g, setG] = useState(null);
   const [pos, setPos] = useState({});
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -51,7 +52,8 @@ export function Canvas() {
 
   useEffect(() => {
     let live = true;
-    const load = () => api.graph().then((d) => {
+    setG(null); setPos({});
+    const load = () => api.graph(project).then((d) => {
       if (!live) return;
       setG(d);
       setPos((prev) => (Object.keys(prev).length ? prev : layout(d.nodes, d.edges, 960, 560)));
@@ -59,7 +61,7 @@ export function Canvas() {
     load();
     const t = setInterval(load, 4000); // keep statuses live; positions preserved
     return () => { live = false; clearInterval(t); };
-  }, []);
+  }, [project]);
 
   const onDown = (e, name) => {
     e.stopPropagation();
@@ -86,11 +88,17 @@ export function Canvas() {
     <div className="animate-rise">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <Link to="/" className="mb-1.5 flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> Overview</Link>
-          <h1 className="text-2xl font-semibold tracking-tight">Canvas</h1>
-          <p className="mt-0.5 text-sm text-muted">Your apps and databases, wired by their <code className="rounded bg-bg-secondary px-1 font-mono text-[0.75rem] text-accent">{'${{ }}'}</code> references. Drag to arrange · click to open.</p>
+          <Link to="/" className="mb-1.5 flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> {project ? 'Projects' : 'Overview'}</Link>
+          <div className="flex items-center gap-2.5">
+            {project && <span className="grid h-8 w-8 place-items-center rounded-xl bg-accent/[0.12] text-accent"><Icon.Canvas className="h-4 w-4" /></span>}
+            <h1 className="text-2xl font-semibold tracking-tight">{project || 'Canvas'}</h1>
+          </div>
+          <p className="mt-0.5 text-sm text-muted">{project ? 'This project’s services' : 'Your apps and databases'}, wired by their <code className="rounded bg-bg-secondary px-1 font-mono text-[0.75rem] text-accent">{'${{ }}'}</code> references. Drag to arrange · click to open.</p>
         </div>
-        <button onClick={() => setPos(layout(g.nodes, g.edges, 960, 560))} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-sm font-medium transition hover:border-muted/50"><Icon.Layers className="h-4 w-4" /> Re-arrange</button>
+        <div className="flex items-center gap-2">
+          {project && <button onClick={() => navigate(`/new?project=${project}`)} className="flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"><Icon.Plus className="h-4 w-4" /> New service</button>}
+          <button onClick={() => setPos(layout(g.nodes, g.edges, 960, 560))} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-sm font-medium transition hover:border-muted/50"><Icon.Layers className="h-4 w-4" /> Re-arrange</button>
+        </div>
       </div>
 
       {g.nodes.length === 0 ? (

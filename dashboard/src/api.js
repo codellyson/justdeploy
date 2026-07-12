@@ -15,7 +15,10 @@ export const api = {
   login: (password) => req('/login', { method: 'POST', body: { password } }),
   logout: () => req('/logout', { method: 'POST' }),
   state: () => req('/state'),
-  graph: () => req('/graph'),
+  graph: (project) => req('/graph' + (project ? `?project=${project}` : '')),
+  projects: () => req('/projects'),
+  createProject: (name) => req('/projects', { method: 'POST', body: { name } }),
+  removeProject: (name) => req(`/projects/${name}`, { method: 'DELETE' }),
 
   createApp: (body) => req('/apps', { method: 'POST', body }),
   deploy: (name) => req(`/apps/${name}/deploy`, { method: 'POST' }),

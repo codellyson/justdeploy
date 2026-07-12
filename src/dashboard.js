@@ -454,10 +454,12 @@ async function api(database, req, res, path) {
   }
 
   // Relationship graph for the canvas: apps + databases are nodes; every `${{source.key}}` env
-  // reference is an edge (app → db, or app → app). Only source names, never values.
+  // reference is an edge. Scoped to one project when ?project=<name> is given.
   if (path === '/api/graph' && req.method === 'GET') {
-    const apps = db.listApps(database);
-    const resources = db.listResources(database);
+    const project = new URL(req.url, 'http://x').searchParams.get('project');
+    const inProj = (p) => !project || (p || 'default') === project;
+    const apps = db.listApps(database).filter((a) => inProj(a.project));
+    const resources = db.listResources(database).filter((r) => inProj(r.project));
     const ids = new Set([...apps.map((a) => a.name), ...resources.map((r) => r.name)]);
     const REF = /\$\{\{\s*([\w-]+)\.([\w-]+)\s*\}\}/g;
     const edges = [];
@@ -465,7 +467,7 @@ async function api(database, req, res, path) {
       const seen = new Map(); // source -> Set(keys)
       for (const v of Object.values(db.getEnv(database, a.name))) {
         for (const m of String(v).matchAll(REF)) {
-          if (m[1] === a.name || !ids.has(m[1])) continue; // skip self + dangling refs
+          if (m[1] === a.name || !ids.has(m[1])) continue; // skip self + refs outside this scope
           if (!seen.has(m[1])) seen.set(m[1], new Set());
           seen.get(m[1]).add(m[2]);
         }
@@ -477,6 +479,31 @@ async function api(database, req, res, path) {
       ...resources.map((r) => ({ kind: r.kind, name: r.name })),
     ];
     return send(res, 200, { nodes, edges });
+  }
+
+  // Projects: each with its services + an aggregate status, for the home page.
+  if (path === '/api/projects' && req.method === 'GET') {
+    const apps = db.listApps(database);
+    const resources = db.listResources(database);
+    const projects = db.listProjects(database).map((p) => {
+      const pa = apps.filter((a) => (a.project || 'default') === p.name).map((a) => ({ kind: 'app', ...appView(database, a) }));
+      const pr = resources.filter((r) => (r.project || 'default') === p.name).map((r) => ({ kind: r.kind, name: r.name }));
+      return { name: p.name, created_at: p.created_at, apps: pa, resources: pr };
+    });
+    return send(res, 200, { projects });
+  }
+  if (path === '/api/projects' && req.method === 'POST') {
+    const { name } = await body(req);
+    const slug = String(name || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (!slug) return send(res, 400, { error: 'project name required' });
+    db.createProject(database, slug, now());
+    return send(res, 200, { ok: true, name: slug });
+  }
+  const pm = path.match(/^\/api\/projects\/([a-z0-9-]+)$/);
+  if (pm && req.method === 'DELETE') {
+    if (pm[1] === 'default') return send(res, 400, { error: 'the default project cannot be removed' });
+    db.removeProject(database, pm[1]); // services fall back to 'default'
+    return send(res, 200, { ok: true });
   }
   if (path === '/api/settings/base-domain' && req.method === 'PUT') {
     const { domain } = await body(req);
@@ -638,10 +665,12 @@ async function api(database, req, res, path) {
   }
 
   if (path === '/api/apps' && req.method === 'POST') {
-    const { name, type, domain, repo, release, persist } = await body(req);
+    const { name, type, domain, repo, release, persist, project } = await body(req);
     if (!TYPES.includes(type)) return send(res, 400, { error: 'bad type' });
     if (!name || !/^[a-z0-9-]+$/.test(name)) return send(res, 400, { error: 'name must be [a-z0-9-]' });
     const serve = row(type).serve;
+    const proj = (String(project || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')) || 'default';
+    db.createProject(database, proj, now()); // ensure the project exists
 
     // Never let a new project silently overwrite an existing app or database.
     if (db.getApp(database, name) || db.getResource(database, name)) {
@@ -654,6 +683,7 @@ async function api(database, req, res, path) {
 
     if (serve === 'resource') { // postgres
       const { conn } = pg.provision(database, name);
+      db.setResourceProject(database, name, proj);
       return send(res, 200, { ok: true, conn });
     }
     if (!domain) return send(res, 400, { error: 'domain required' });
@@ -661,7 +691,7 @@ async function api(database, req, res, path) {
     db.upsertApp(database, {
       name, type, domain, repo, serve,
       // The type carries its own release command (Adonis → migrations); an explicit one overrides.
-      release_cmd: release || row(type).release || null, persist: persist || null, created_at: now(),
+      release_cmd: release || row(type).release || null, persist: persist || null, project: proj, created_at: now(),
     });
     if (type === 'adonis') db.setEnv(database, name, 'APP_KEY', randomBytes(32).toString('base64url'));
 
