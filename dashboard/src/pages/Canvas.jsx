@@ -103,7 +103,11 @@ export function Canvas() {
 
       {g.nodes.length === 0 ? (
         <div className="surface grid place-items-center py-24 text-center text-muted">
-          <div><Icon.Layers className="mx-auto mb-3 h-8 w-8 opacity-40" /><p className="text-sm">No apps yet — deploy one and it'll appear here.</p></div>
+          <div className="flex flex-col items-center gap-3">
+            <Icon.Layers className="h-8 w-8 opacity-40" />
+            <p className="text-sm">{project ? 'This project has no services yet.' : 'No apps yet — deploy one and it’ll appear here.'}</p>
+            {project && <button onClick={() => navigate(`/new?project=${project}`)} className="flex items-center gap-1.5 rounded-xl bg-accent px-3.5 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"><Icon.Plus className="h-4 w-4" /> New service</button>}
+          </div>
         </div>
       ) : (
         <div

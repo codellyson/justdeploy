@@ -66,15 +66,17 @@ export function NewProject() {
   const submit = async () => {
     setErr(''); setBusy(true);
     try {
-      const body = { type, name: (f.name || '').trim(), project: (f.project ?? presetProject).trim() };
+      const proj = (f.project ?? presetProject).trim();
+      const body = { type, name: (f.name || '').trim(), project: proj };
       if (needsRepoDomain(type)) { body.repo = (f.repo || '').trim(); body.domain = (f.domain || '').trim(); }
       if (PROXY.includes(type)) { body.release = (f.release || '').trim(); body.persist = (f.persist || '').trim(); }
+      const back = proj && proj !== 'default' ? `/projects/${proj}` : '/';
       const r = await api.createApp(body);
       invalidate();
-      if (r.conn) { navigator.clipboard?.writeText(r.conn); toast('database provisioned · connection copied', 'success'); navigate('/'); return; }
+      if (r.conn) { navigator.clipboard?.writeText(r.conn); toast('database provisioned · connection copied', 'success'); navigate(back); return; }
       if (r.deploying) { toast(`deploying ${body.name}…`); navigate(`/apps/${body.name}`); return; }
       toast(`created ${body.name}`, 'success');
-      navigate('/');
+      navigate(back);
     } catch (e) { setErr(e.message); setBusy(false); }
   };
 
@@ -82,10 +84,10 @@ export function NewProject() {
 
   return (
     <div className="animate-rise mx-auto max-w-[760px]">
-      <Link to="/" className="mb-5 flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> Overview</Link>
+      <Link to={presetProject ? `/projects/${presetProject}` : '/'} className="mb-5 flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> {presetProject || 'Overview'}</Link>
 
       <div className="mb-7 text-center">
-        <h1 className="text-2xl font-semibold tracking-tight">Deploy a new project</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{presetProject ? <>New service in <span className="text-accent">{presetProject}</span></> : 'Deploy a new service'}</h1>
         <p className="mt-1 text-sm text-muted">Tell me what it is — that's the whole configuration.</p>
       </div>
 

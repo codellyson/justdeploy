@@ -46,7 +46,7 @@ function ProjectCard({ p }) {
 }
 
 export function Overview() {
-  const { openNew } = useOutletContext();
+  const { openNew, newProject } = useOutletContext();
   const v = useVersion();
   const [state, setState] = useState(null);
   const [projects, setProjects] = useState(null);
@@ -72,7 +72,8 @@ export function Overview() {
     );
   }
 
-  const shown = projects.filter((p) => p.apps.length + p.resources.length > 0);
+  // Show every project you made; only hide the implicit 'default' bucket while it's empty.
+  const shown = projects.filter((p) => p.apps.length + p.resources.length > 0 || p.name !== 'default');
   const apps = state.apps.filter((a) => a.serve !== 'resource');
   const anyFailed = apps.some((a) => appHealth(a) === 'failed');
 
@@ -97,7 +98,7 @@ export function Overview() {
         <div className="surface flex flex-col items-center gap-3 py-16 text-center">
           <span className="grid h-11 w-11 place-items-center rounded-2xl bg-accent/[0.12] text-accent"><Icon.Rocket className="h-5 w-5" /></span>
           <p className="text-secondary">No projects yet.</p>
-          <button onClick={openNew} className="flex items-center gap-1.5 rounded-xl bg-accent px-3.5 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"><Icon.Plus className="h-4 w-4" /> New Project</button>
+          <button onClick={newProject} className="flex items-center gap-1.5 rounded-xl bg-accent px-3.5 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"><Icon.Plus className="h-4 w-4" /> New Project</button>
         </div>
       ) : (
         <div className="stagger grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
