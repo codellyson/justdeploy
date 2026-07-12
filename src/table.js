@@ -29,7 +29,11 @@ function npmInstall(flags = '') {
       `rm -f .jd-npm.log .jd-npm.ec; ${legacy}; ` +
     `else rm -f .jd-npm.log .jd-npm.ec; [ "$ec" -eq 0 ] || exit "$ec"; fi`;
 }
-const NPM = npmInstall();
+// Build install: force devDependencies IN. Build tooling (Vite, TypeScript, tailwind, Adonis's
+// assembler/ts-node-maintained) lives in devDependencies, but a proxy type sets NODE_ENV=production
+// in the build env, and npm omits dev deps under NODE_ENV=production — which breaks the build. So
+// the build install always includes dev; the runtime prune (--omit=dev) happens separately below.
+const NPM = npmInstall('--include=dev');
 const NPM_PROD = npmInstall('--omit=dev');
 
 export const TABLE = {
