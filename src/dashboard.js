@@ -682,8 +682,11 @@ async function api(database, req, res, path) {
     }
 
     if (serve === 'resource') { // postgres
-      const { conn } = pg.provision(database, name);
-      db.setResourceProject(database, name, proj);
+      // provision() stores the resource under the container name (`<name>-db`), so assign the
+      // project to THAT — using the raw name would update a row that doesn't exist, leaving the
+      // database in 'default' and invisible on its project's canvas.
+      const { container, conn } = pg.provision(database, name);
+      db.setResourceProject(database, container, proj);
       return send(res, 200, { ok: true, conn });
     }
     if (!domain) return send(res, 400, { error: 'domain required' });
