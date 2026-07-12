@@ -67,6 +67,19 @@ const RULES = [
     hint: 'Check that Caddy is running: `systemctl status caddy`. JustDeploy drives it via localhost:2019.',
   },
   {
+    // Container builds (Railpack) install with a frozen lockfile, like CI. pnpm and yarn both
+    // refuse when the lockfile no longer matches package.json — typically a dep was added without
+    // re-running install, so the committed lockfile is stale.
+    match: /ERR_PNPM_OUTDATED_LOCKFILE|frozen-lockfile.*(?:not up to date|up to date)|pnpm-lock\.yaml is not up to date|YN0028|lockfile would have been (?:modified|created)|Your lockfile needs to be updated/i,
+    reason: 'The committed lockfile is out of date — it does not match package.json, so the frozen install refused to run',
+    hint: (text) => {
+      const pm = /pnpm/i.test(text) ? 'pnpm install'
+               : /yarn|YN\d|Your lockfile needs to be updated/i.test(text) ? 'yarn install'
+               : 'npm install';
+      return `A dependency was added or changed in package.json without refreshing the lockfile. In the app repo run \`${pm}\`, commit the updated lockfile alongside package.json, and redeploy. The container build installs with a frozen lockfile (like CI), so the lockfile must be committed in sync — don't switch to \`--no-frozen-lockfile\`, that just hides the drift.`;
+    },
+  },
+  {
     match: /ERESOLVE|could not resolve dependency|conflicting peer dependency/i,
     reason: 'A dependency conflict survived even the --legacy-peer-deps retry',
     hint: (text) => {
