@@ -452,6 +452,32 @@ async function api(database, req, res, path) {
   if (path === '/api/doctor' && req.method === 'GET') {
     return send(res, 200, await setup.inspect());
   }
+
+  // Relationship graph for the canvas: apps + databases are nodes; every `${{source.key}}` env
+  // reference is an edge (app → db, or app → app). Only source names, never values.
+  if (path === '/api/graph' && req.method === 'GET') {
+    const apps = db.listApps(database);
+    const resources = db.listResources(database);
+    const ids = new Set([...apps.map((a) => a.name), ...resources.map((r) => r.name)]);
+    const REF = /\$\{\{\s*([\w-]+)\.([\w-]+)\s*\}\}/g;
+    const edges = [];
+    for (const a of apps) {
+      const seen = new Map(); // source -> Set(keys)
+      for (const v of Object.values(db.getEnv(database, a.name))) {
+        for (const m of String(v).matchAll(REF)) {
+          if (m[1] === a.name || !ids.has(m[1])) continue; // skip self + dangling refs
+          if (!seen.has(m[1])) seen.set(m[1], new Set());
+          seen.get(m[1]).add(m[2]);
+        }
+      }
+      for (const [to, keys] of seen) edges.push({ from: a.name, to, keys: [...keys] });
+    }
+    const nodes = [
+      ...apps.map((a) => ({ kind: 'app', ...appView(database, a) })),
+      ...resources.map((r) => ({ kind: r.kind, name: r.name })),
+    ];
+    return send(res, 200, { nodes, edges });
+  }
   if (path === '/api/settings/base-domain' && req.method === 'PUT') {
     const { domain } = await body(req);
     db.setSetting(database, 'base_domain', (domain || '').trim());

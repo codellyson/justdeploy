@@ -8,6 +8,7 @@ import { AppDetail } from './pages/AppDetail';
 import { DatabaseDetail } from './pages/DatabaseDetail';
 import { NewProject } from './pages/NewProject';
 import { Settings } from './pages/Settings';
+import { Canvas } from './pages/Canvas';
 import { ToastHost } from './components/toast';
 import { Spinner } from './components/ui';
 
@@ -34,6 +35,7 @@ export default function App() {
               <Route path="/" element={<Overview />} />
               <Route path="/new" element={<NewProject />} />
               <Route path="/settings" element={<Settings />} />
+              <Route path="/canvas" element={<Canvas />} />
               <Route path="/apps/:name" element={<AppDetail />} />
               <Route path="/db/:name" element={<DatabaseDetail />} />
               <Route path="*" element={<Overview />} />

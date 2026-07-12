@@ -15,6 +15,7 @@ export const api = {
   login: (password) => req('/login', { method: 'POST', body: { password } }),
   logout: () => req('/logout', { method: 'POST' }),
   state: () => req('/state'),
+  graph: () => req('/graph'),
 
   createApp: (body) => req('/apps', { method: 'POST', body }),
   deploy: (name) => req(`/apps/${name}/deploy`, { method: 'POST' }),

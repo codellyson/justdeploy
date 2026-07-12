@@ -39,6 +39,13 @@ export function Shell({ onSignedOut }) {
               Docs
               <Icon.ExternalLink className="h-3 w-3 opacity-60" />
             </a>
+            <button
+              onClick={() => navigate('/canvas')}
+              title="Canvas"
+              className="grid h-9 w-9 place-items-center rounded-lg text-muted transition hover:bg-bg-secondary hover:text-primary"
+            >
+              <Icon.Canvas className="h-[1.05rem] w-[1.05rem]" />
+            </button>
             <ThemeMenu />
             <button
               onClick={() => navigate('/settings')}
