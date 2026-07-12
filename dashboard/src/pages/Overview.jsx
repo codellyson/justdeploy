@@ -3,10 +3,10 @@ import { Link, useOutletContext } from 'react-router-dom';
 import { api } from '../api';
 import { useVersion } from '../lib/store';
 import { toast } from '../components/toast';
-import { StatusDot, SoftIcon, Avatar, Mono, Spinner, tone, STATUS_META } from '../components/ui';
+import { StatusDot, StatusPill, SoftIcon, Avatar, Mono, Spinner } from '../components/ui';
 import { Icon } from '../components/icons';
 import { Onboarding } from '../components/Onboarding';
-import { appHealth, shortSha, timeAgo, cx } from '../lib/format';
+import { appHealth, shortSha, timeAgo, typeLabel, cx } from '../lib/format';
 
 function Stat({ icon, label, value, tone: t, sub }) {
   return (
@@ -25,33 +25,36 @@ function Stat({ icon, label, value, tone: t, sub }) {
 
 function ProjectCard({ a }) {
   const h = appHealth(a);
-  const m = STATUS_META[h];
   const d = a.lastDeploy;
-  const line = a.deploying ? 'Deploying…'
-    : d ? (d.status === 'failed' ? (d.reason || 'Deploy failed') : `Deployed ${shortSha(d.sha) || ''}`.trim())
-      : 'Never deployed';
+  const failed = d?.status === 'failed';
+  const visit = (e) => { e.preventDefault(); e.stopPropagation(); window.open(`https://${a.domain}`, '_blank', 'noopener'); };
   return (
-    <Link to={`/apps/${a.name}`} className="surface flex flex-col gap-3 p-4 transition hover:border-muted/40 hover:shadow-lg">
-      <div className="flex items-center gap-3">
+    <Link to={`/apps/${a.name}`} className="group surface flex flex-col gap-3.5 p-4 transition hover:border-accent/40 hover:shadow-xl hover:shadow-black/20">
+      <div className="flex items-start gap-3">
         <Avatar type={a.type} />
         <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold">{a.name}</div>
-          <div className="truncate font-mono text-xs text-secondary">{a.domain || a.serve}</div>
+          <div className="flex items-center gap-2">
+            <span className="truncate font-semibold">{a.name}</span>
+            <span className="shrink-0 rounded bg-[rgb(var(--text-primary)/0.06)] px-1.5 py-0.5 text-[0.6rem] font-semibold uppercase tracking-wide text-muted">{typeLabel(a.type)}</span>
+          </div>
+          {a.domain
+            ? <button onClick={visit} className="mt-0.5 flex max-w-full items-center gap-1 font-mono text-xs text-muted transition hover:text-accent">
+                <span className="truncate">{a.domain}</span>
+                <Icon.ExternalLink className="h-3 w-3 shrink-0 opacity-0 transition group-hover:opacity-70" />
+              </button>
+            : <div className="mt-0.5 font-mono text-xs text-muted">{a.serve}</div>}
         </div>
         <StatusDot status={h} ring size="h-2.5 w-2.5" />
       </div>
-      <div className="flex flex-col gap-2 border-t border-border pt-3">
-        <div className="flex items-center gap-2 text-sm text-secondary">
-          <Icon.GitCommit className="h-3.5 w-3.5 shrink-0 text-muted" />
-          <span className="truncate">{line}</span>
-        </div>
-        <div className="flex items-center justify-between gap-2 text-xs">
-          <span className={cx('font-medium', tone(m.tone).text)}>{m.label}</span>
-          <span className="flex items-center gap-1.5 font-mono text-muted">
-            {a.serve === 'proxy' && a.live_port ? <>:{a.live_port}</> : null}
-            {d?.at && <><span className="text-muted/60">·</span>{timeAgo(d.at)}</>}
-          </span>
-        </div>
+      <div className="flex items-center justify-between gap-2 border-t border-border pt-3">
+        <StatusPill status={h} />
+        <span className="flex min-w-0 items-center gap-1.5 truncate font-mono text-xs text-muted">
+          {a.deploying ? <span className="text-accent">deploying…</span>
+            : failed ? <span className="truncate text-danger">{d.reason || 'failed'}</span>
+              : d?.sha ? <><Icon.GitCommit className="h-3 w-3 shrink-0" />{shortSha(d.sha)}</>
+                : 'never deployed'}
+          {d?.at && !a.deploying && <><span className="text-muted/50">·</span>{timeAgo(d.at)}</>}
+        </span>
       </div>
     </Link>
   );

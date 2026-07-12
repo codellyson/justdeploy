@@ -202,32 +202,119 @@ function OverviewTab({ app, onLogs, onDeploys }) {
   );
 }
 
+// ---- log rendering: ANSI colors + content colorization ------------------------------------
+// 16-color ANSI palette tuned to the warm-dark theme.
+const ANSI_FG = {
+  30: '#5c5548', 31: '#dc695f', 32: '#a5c382', 33: '#dca060', 34: '#9fb0d8', 35: '#c49bd8', 36: '#8fc7c7', 37: '#c8bfb2',
+  90: '#7c7266', 91: '#e88a80', 92: '#b8d69a', 93: '#e8bb82', 94: '#b3c1e6', 95: '#d4b3e6', 96: '#a9dcdc', 97: '#e8ded2',
+};
+// Split a line into styled segments, carrying ANSI state across chunks (st is mutated).
+function ansiSegments(text, st) {
+  const out = []; let i = 0, buf = '';
+  const flush = () => { if (buf) { out.push({ text: buf, color: st.color, bold: st.bold, dim: st.dim }); buf = ''; } };
+  while (i < text.length) {
+    if (text[i] === '\x1b' && text[i + 1] === '[') {
+      flush();
+      let j = i + 2; while (j < text.length && text[j] !== 'm' && j - i < 14) j++;
+      for (const c of text.slice(i + 2, j).split(';').map(Number)) {
+        if (c === 0 || Number.isNaN(c)) { st.color = null; st.bold = false; st.dim = false; }
+        else if (c === 1) st.bold = true; else if (c === 2) st.dim = true; else if (c === 22) { st.bold = false; st.dim = false; }
+        else if (ANSI_FG[c]) st.color = ANSI_FG[c]; else if (c === 39) st.color = null;
+      }
+      i = j + 1;
+    } else { buf += text[i++]; }
+  }
+  flush();
+  return out;
+}
+// Colorize a plain (non-ANSI) line by content — commands, comments, errors, success, markers.
+function lineColor(l) {
+  if (/^\s*\$ /.test(l)) return '#c3cdeb';                          // $ command
+  if (/^\s*#/.test(l)) return '#7c7266';                            // # comment
+  if (/\[justdeploy\]/i.test(l)) return '#a8b4dc';                  // our markers
+  if (/(^|\s)(error|err!|fatal|failed|✗|✖|cannot|exception|EADDRINUSE|ELIFECYCLE)/i.test(l)) return '#dc695f';
+  if (/(^|\s)(warn|warning|deprecated)/i.test(l)) return '#dca060';
+  if (/(✓|✔|success|compiled|ready|listening|done|built|uploaded)/i.test(l)) return '#a5c382';
+  return null; // default (secondary)
+}
+
 function LogsTab({ name }) {
   const boxRef = useRef(null);
   const [live, setLive] = useState(true);
   const [lines, setLines] = useState(0);
   const [kind, setKind] = useState('build'); // 'build' (clone→build→migrations) | 'runtime' (app output)
-  useEffect(() => {
-    const box = boxRef.current;
-    if (box) box.textContent = '';
-    let count = 0;
+  const [wrap, setWrap] = useState(true);
+  const [q, setQ] = useState('');
+  const [atBottom, setAtBottom] = useState(true);
+  const st = useRef({ partial: '', ansi: { color: null, bold: false, dim: false }, count: 0, q: '' });
+
+  const matches = (l) => !st.current.q || l.toLowerCase().includes(st.current.q);
+  const appendLine = (line) => {
+    const box = boxRef.current; if (!box) return;
+    const el = document.createElement('div');
+    if (!matches(line)) el.style.display = 'none';
+    el.dataset.raw = line;
+    if (line.includes('\x1b[')) {
+      for (const s of ansiSegments(line, st.current.ansi)) {
+        const span = document.createElement('span');
+        span.textContent = s.text;
+        if (s.color) span.style.color = s.color;
+        if (s.dim) span.style.opacity = '0.65';
+        if (s.bold) span.style.fontWeight = '600';
+        el.appendChild(span);
+      }
+    } else {
+      el.textContent = line || ' ';
+      const c = lineColor(line); if (c) el.style.color = c;
+    }
+    box.appendChild(el);
+  };
+
+  const clearBox = () => {
+    const box = boxRef.current; if (box) box.innerHTML = '';
+    st.current = { partial: '', ansi: { color: null, bold: false, dim: false }, count: 0, q: st.current.q };
     setLines(0);
+  };
+
+  useEffect(() => {
+    clearBox();
     const es = api.stream(name, kind);
     es.onmessage = (e) => {
-      if (!box) return;
-      const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
-      box.textContent += e.data;
-      count += (e.data.match(/\n/g) || []).length;
-      setLines(count);
+      const box = boxRef.current; if (!box) return;
+      const stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 40;
+      st.current.partial += e.data + '\n';
+      const parts = st.current.partial.split('\n');
+      st.current.partial = parts.pop();
+      for (const line of parts) { appendLine(line); st.current.count++; }
+      setLines(st.current.count);
       if (stick) box.scrollTop = box.scrollHeight;
     };
     es.onopen = () => setLive(true);
     es.onerror = () => setLive(false);
     return () => es.close();
   }, [name, kind]);
+
+  // Re-apply the filter to existing lines when the query changes.
+  useEffect(() => {
+    st.current.q = q.trim().toLowerCase();
+    const box = boxRef.current; if (!box) return;
+    for (const el of box.children) el.style.display = matches(el.dataset.raw || '') ? '' : 'none';
+  }, [q]);
+
+  const onScroll = () => {
+    const box = boxRef.current; if (!box) return;
+    setAtBottom(box.scrollTop + box.clientHeight >= box.scrollHeight - 40);
+  };
+  const toBottom = () => { const box = boxRef.current; if (box) box.scrollTop = box.scrollHeight; };
+  const download = () => {
+    const text = [...(boxRef.current?.children || [])].map((el) => el.dataset.raw).join('\n');
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+    const a = document.createElement('a'); a.href = url; a.download = `${name}-${kind}.log`; a.click(); URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="surface overflow-hidden p-0">
-      <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2.5">
         <div className="flex rounded-lg border border-border bg-bg-secondary p-0.5">
           {[['build', 'Build'], ['runtime', 'Runtime']].map(([k, label]) => (
             <button key={k} onClick={() => setKind(k)} title={k === 'build' ? 'clone, build, migrations' : "the running app's output"}
@@ -237,10 +324,25 @@ function LogsTab({ name }) {
         <span className={cx('flex items-center gap-1.5 font-mono text-[0.7rem]', live ? 'text-success' : 'text-warning')}>
           <span className={cx('h-1.5 w-1.5 rounded-full pulse-dot', live ? 'bg-success' : 'bg-warning')} />{live ? 'streaming' : 'reconnecting'}
         </span>
-        <div className="flex-1" />
-        <span className="font-mono text-[0.7rem] text-muted">{lines} lines · {kind === 'build' ? 'this deploy' : 'live'}</span>
+        <div className="relative ml-auto">
+          <Icon.Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="filter…" spellCheck={false}
+            className="w-32 rounded-lg border border-border bg-bg py-1.5 pl-8 pr-2 text-xs outline-none transition focus:w-44 focus:border-muted/50" />
+        </div>
+        <button onClick={() => setWrap((w) => !w)} title="Toggle wrap" className={cx('grid h-7 w-7 place-items-center rounded-md transition', wrap ? 'text-accent' : 'text-muted hover:text-primary')}><Icon.Wrap className="h-4 w-4" /></button>
+        <button onClick={download} title="Download" className="grid h-7 w-7 place-items-center rounded-md text-muted transition hover:text-primary"><Icon.Download className="h-4 w-4" /></button>
+        <button onClick={clearBox} title="Clear" className="grid h-7 w-7 place-items-center rounded-md text-muted transition hover:text-danger"><Icon.X className="h-4 w-4" /></button>
       </div>
-      <pre ref={boxRef} className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words bg-bg p-4 font-mono text-xs leading-relaxed text-secondary" />
+      <div className="relative">
+        <div ref={boxRef} onScroll={onScroll}
+          className={cx('max-h-[62vh] min-h-[240px] overflow-auto bg-bg px-4 py-3 font-mono text-xs leading-[1.65] text-secondary [&>div]:min-h-[1.2em]', wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre')} />
+        {!atBottom && (
+          <button onClick={toBottom} className="absolute bottom-3 right-4 flex items-center gap-1.5 rounded-full border border-border bg-bg-secondary px-3 py-1.5 text-xs font-medium shadow-lg transition hover:border-accent/50">
+            <Icon.ArrowDown className="h-3.5 w-3.5" /> Latest
+          </button>
+        )}
+        <span className="pointer-events-none absolute right-4 top-2.5 font-mono text-[0.7rem] text-muted">{lines} lines · {kind === 'build' ? 'this deploy' : 'live'}</span>
+      </div>
     </div>
   );
 }
