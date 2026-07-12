@@ -22,6 +22,18 @@ function ensureNetwork() {
 
 const rand = () => randomBytes(18).toString('base64url'); // safe for SQL single-quotes
 
+const containerExists = (name) =>
+  spawnSync('docker', ['inspect', name], { encoding: 'utf8' }).status === 0;
+
+// Remove a leftover container + its data volume that share a provisioning name but aren't tracked
+// as one of our resources — an orphan from a deleted app (its data was abandoned when the app was
+// removed). Clearing it lets the name, and a fresh cluster with the new password, provision cleanly.
+// Mirrors how app containers `docker rm -f` before `run` so provisioning is idempotent.
+function clearOrphan(container, base) {
+  spawnSync('docker', ['rm', '-f', container], { encoding: 'utf8' });
+  spawnSync('docker', ['volume', 'rm', '-f', `${base}-pgdata`], { encoding: 'utf8' });
+}
+
 function runContainer({ name, base, superPass, dbName, bind, port }) {
   docker([
     'run', '-d', '--name', name, '--restart', 'unless-stopped',
@@ -31,11 +43,15 @@ function runContainer({ name, base, superPass, dbName, bind, port }) {
   ]);
 }
 
-// Wait for the server to accept connections (docker exec uses local `trust` auth — no password).
-function waitReady(name, ms = 30000) {
+// Wait for the server to accept connections. Force a TCP check (-h 127.0.0.1) rather than the
+// default Unix socket: the postgres image runs a temporary socket-only server during initdb (to
+// bootstrap the data dir), then stops it and starts the real server on TCP. A socket pg_isready
+// reports "ready" during that init window, so role creation / TLS setup would race the restart.
+// TCP is only up once the real server is — so this waits for the server that actually stays up.
+function waitReady(name, ms = 45000) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    if (spawnSync('docker', ['exec', name, 'pg_isready', '-U', 'postgres'], { encoding: 'utf8' }).status === 0) return true;
+    if (spawnSync('docker', ['exec', name, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres'], { encoding: 'utf8' }).status === 0) return true;
     spawnSync('sh', ['-c', 'sleep 0.5']);
   }
   throw new Error('database did not become ready in time');
@@ -91,15 +107,28 @@ export function enableTls(name) {
 export function provision(database, name, { dbName = name } = {}) {
   ensureNetwork();
   const container = `${name}-db`;
+  // Never clobber a database we actually track — that's a real name collision, not an orphan.
+  if (db.getResource(database, container)) throw new Error(`a database named "${container}" already exists — choose another name`);
+  // A container/volume with this name that we DON'T track is a leftover from a deleted app; clear
+  // it so `docker run` doesn't hit a name conflict (the reported "container name already in use").
+  if (containerExists(container)) clearOrphan(container, name);
   const superPass = rand();
   const appPass = rand();
   const port = db.allocatePgPort(database);
 
   runContainer({ name: container, base: name, superPass, dbName, bind: '127.0.0.1', port });
   db.setSetting(database, `pgsuper:${container}`, superPass);
-  waitReady(container);
-  ensureAppRole(container, dbName, 'app', appPass);
-  enableTls(container);
+  // If any setup step fails, roll the container back so we never leave an orphan behind (which
+  // would then block a retry with a name conflict). Provision is all-or-nothing.
+  try {
+    waitReady(container);
+    ensureAppRole(container, dbName, 'app', appPass);
+    enableTls(container);
+  } catch (e) {
+    clearOrphan(container, name);
+    db.setSetting(database, `pgsuper:${container}`, '');
+    throw e;
+  }
 
   // Host-reachable connection string using the scoped role (apps run on the host → 127.0.0.1).
   const conn = `postgres://app:${appPass}@127.0.0.1:${port}/${dbName}?sslmode=require`;
