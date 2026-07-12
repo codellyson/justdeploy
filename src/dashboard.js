@@ -475,8 +475,8 @@ async function api(database, req, res, path) {
       for (const [to, keys] of seen) edges.push({ from: a.name, to, keys: [...keys] });
     }
     const nodes = [
-      ...apps.map((a) => ({ kind: 'app', ...appView(database, a) })),
-      ...resources.map((r) => ({ kind: r.kind, name: r.name })),
+      ...apps.map((a) => ({ kind: 'app', ...appView(database, a), project: a.project || 'default' })),
+      ...resources.map((r) => ({ kind: r.kind, name: r.name, project: r.project || 'default' })),
     ];
     return send(res, 200, { nodes, edges });
   }

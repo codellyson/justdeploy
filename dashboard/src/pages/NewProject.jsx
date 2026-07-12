@@ -74,7 +74,7 @@ export function NewProject() {
       const r = await api.createApp(body);
       invalidate();
       if (r.conn) { navigator.clipboard?.writeText(r.conn); toast('database provisioned · connection copied', 'success'); navigate(back); return; }
-      if (r.deploying) { toast(`deploying ${body.name}…`); navigate(`/apps/${body.name}`); return; }
+      if (r.deploying) { toast(`deploying ${body.name}…`); navigate(`/projects/${proj || 'default'}/${body.name}`, { state: { kind: 'app' } }); return; }
       toast(`created ${body.name}`, 'success');
       navigate(back);
     } catch (e) { setErr(e.message); setBusy(false); }

@@ -4,11 +4,10 @@ import { api } from './api';
 import { Shell } from './components/Shell';
 import { Login } from './pages/Login';
 import { Overview } from './pages/Overview';
-import { AppDetail } from './pages/AppDetail';
-import { DatabaseDetail } from './pages/DatabaseDetail';
 import { NewProject } from './pages/NewProject';
 import { Settings } from './pages/Settings';
 import { Canvas } from './pages/Canvas';
+import { ServiceDetail, LegacyServiceRedirect } from './pages/ServiceDetail';
 import { ToastHost } from './components/toast';
 import { Spinner } from './components/ui';
 
@@ -37,8 +36,10 @@ export default function App() {
               <Route path="/settings" element={<Settings />} />
               <Route path="/canvas" element={<Canvas />} />
               <Route path="/projects/:name" element={<Canvas />} />
-              <Route path="/apps/:name" element={<AppDetail />} />
-              <Route path="/db/:name" element={<DatabaseDetail />} />
+              <Route path="/projects/:project/:name" element={<ServiceDetail />} />
+              {/* legacy flat routes → redirect to the project-scoped URL */}
+              <Route path="/apps/:name" element={<LegacyServiceRedirect />} />
+              <Route path="/db/:name" element={<LegacyServiceRedirect />} />
               <Route path="*" element={<Overview />} />
             </Route>
           </Routes>

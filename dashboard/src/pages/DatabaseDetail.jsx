@@ -45,7 +45,8 @@ function ConnBlock({ label, value, hint, disabled = false, badge }) {
 }
 
 export function DatabaseDetail() {
-  const { name } = useParams();
+  const { project, name } = useParams();
+  const back = project ? `/projects/${project}` : '/'; // return to this database's project canvas
   const navigate = useNavigate();
   const v = useVersion();
   const [r, setR] = useState(null);
@@ -62,7 +63,7 @@ export function DatabaseDetail() {
     return () => { live = false; clearInterval(t); };
   }, [name, v]);
 
-  if (missing) return <div className="py-20 text-center text-muted">Database <span className="font-mono text-primary">{name}</span> not found. <Link to="/" className="inline-flex items-center gap-1 text-accent"><Icon.ArrowLeft className="h-3.5 w-3.5" /> back</Link></div>;
+  if (missing) return <div className="py-20 text-center text-muted">Database <span className="font-mono text-primary">{name}</span> not found. <Link to={back} className="inline-flex items-center gap-1 text-accent"><Icon.ArrowLeft className="h-3.5 w-3.5" /> back</Link></div>;
   if (!r) return <div className="flex justify-center py-20"><Spinner className="h-6 w-6" /></div>;
 
   const st = r.running ? 'success' : r.status === 'exited' ? 'danger' : 'muted';
@@ -73,7 +74,7 @@ export function DatabaseDetail() {
     try { const { conn } = await api.resetResourcePassword(name); navigator.clipboard?.writeText(conn); invalidate(); toast('password rotated · new connection copied', 'success'); }
     catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
   };
-  const remove = async () => { if (confirm(`Delete ${name} and its data volume? This cannot be undone.`)) { try { await api.removeResource(name); toast(`${name} removed`); navigate('/'); } catch (e) { toast(e.message, 'error'); } } };
+  const remove = async () => { if (confirm(`Delete ${name} and its data volume? This cannot be undone.`)) { try { await api.removeResource(name); toast(`${name} removed`); navigate(back); } catch (e) { toast(e.message, 'error'); } } };
   const makePrivate = async () => {
     setBusy('expose');
     try { await api.exposeResource(name, false, []); invalidate(); toast('now private (localhost only)', 'success'); }
@@ -87,7 +88,7 @@ export function DatabaseDetail() {
 
   return (
     <div className="animate-rise flex flex-col gap-5">
-      <Link to="/" className="flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> Overview</Link>
+      <Link to={back} className="flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> {project || 'Overview'}</Link>
 
       <div className="flex flex-wrap items-center gap-3">
         <SoftIcon icon={Icon.Database} tone="accent" size="h-11 w-11" />

@@ -22,7 +22,8 @@ function duration(d) {
 }
 
 export function AppDetail() {
-  const { name } = useParams();
+  const { project, name } = useParams();
+  const back = project ? `/projects/${project}` : '/'; // return to this app's project canvas
   const navigate = useNavigate();
   const v = useVersion();
   const [app, setApp] = useState(null);
@@ -40,7 +41,7 @@ export function AppDetail() {
     return () => { live = false; clearInterval(t); };
   }, [name, v]);
 
-  if (missing) return <div className="py-20 text-center text-muted">App <span className="font-mono text-primary">{name}</span> not found. <Link to="/" className="inline-flex items-center gap-1 text-accent"><Icon.ArrowLeft className="h-3.5 w-3.5" /> back</Link></div>;
+  if (missing) return <div className="py-20 text-center text-muted">App <span className="font-mono text-primary">{name}</span> not found. <Link to={back} className="inline-flex items-center gap-1 text-accent"><Icon.ArrowLeft className="h-3.5 w-3.5" /> back</Link></div>;
   if (!app) return <div className="flex justify-center py-20"><Spinner className="h-6 w-6" /></div>;
 
   const h = appHealth(app);
@@ -53,11 +54,11 @@ export function AppDetail() {
   const deploy = () => act('deploy', () => api.deploy(name), 'Logs').then(() => toast(`deploying ${name}`));
   const rollback = () => { if (confirm(`Roll back to ${shortSha(app.rollbackTo)}?`)) act('rollback', () => api.rollback(name), 'Logs'); };
   const rollbackSha = (sha) => { if (confirm(`Roll back to ${shortSha(sha)}?`)) act('rollback', () => api.rollback(name, sha), 'Logs'); };
-  const remove = () => { if (confirm(`Delete ${name}? Removes files and stops it.`)) act('delete', async () => { await api.remove(name); navigate('/'); toast(`${name} removed`); }); };
+  const remove = () => { if (confirm(`Delete ${name}? Removes files and stops it.`)) act('delete', async () => { await api.remove(name); navigate(back); toast(`${name} removed`); }); };
 
   return (
     <div className="animate-rise flex flex-col gap-5">
-      <Link to="/" className="flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> Overview</Link>
+      <Link to={back} className="flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> {project || 'Overview'}</Link>
 
       {/* header */}
       <div className="flex flex-wrap items-start gap-4">

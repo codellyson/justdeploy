@@ -77,7 +77,10 @@ export function Canvas() {
   };
   const onUp = (name) => {
     const d = drag.current; drag.current = null;
-    if (name && d && !d.moved) navigate(g.nodes.find((n) => n.name === name)?.kind === 'postgres' ? `/db/${name}` : `/apps/${name}`);
+    if (!name || !d || d.moved) return;
+    const node = g.nodes.find((n) => n.name === name);
+    const proj = project || node?.project || 'default'; // global canvas: use the node's own project
+    navigate(`/projects/${proj}/${name}`, { state: { kind: node?.kind === 'postgres' ? 'db' : 'app' } });
   };
 
   if (!g) return <Spinner className="mx-auto my-20 h-6 w-6" />;
