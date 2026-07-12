@@ -156,10 +156,17 @@ function containerVolumes(name, persist) {
 // health-check it, repoint Caddy, then stop the old one. Same invariant as the host swap.
 async function deployContainer(database, name, app, sha) {
   const src = await archiveSource(name, sha);
-  await container.build(name, name, sha, src);           // railpack build → image tag
+  // The container's start command: the type's runner (Adonis → node build/bin/server.js; else
+  // Railpack's detected default), with the release command (migrations) baked in front so it runs
+  // — idempotently — before the server on every start. Falls back to exec-less default if neither.
+  const appStart = row(app.type).railpackStart || null;
+  const startCmd = app.release_cmd && appStart ? `${app.release_cmd} && ${appStart}` : appStart;
+  await container.build(name, name, sha, src, startCmd);  // railpack build → image tag
   const port = db.allocatePort(database);
-  const env = appEnv(database, name, app.type, port);    // includes PORT=<port>, ${{ }} resolved
+  const env = appEnv(database, name, app.type, port);    // includes PORT=<port>, ${{ }} resolved (container-aware)
   const volumes = containerVolumes(name, app.persist);
+  // Attach provisioned Postgres to the shared network so this container can reach it by name.
+  for (const r of db.listResources(database)) if (r.kind === 'postgres') container.connectToNetwork(r.name);
   const newC = container.runContainer(name, sha, port, env, volumes);
 
   const healthy = await proc.healthCheck(port, { path: app.health_path, timeout: app.health_timeout });

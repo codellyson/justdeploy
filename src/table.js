@@ -29,12 +29,11 @@ function npmInstall(flags = '') {
       `rm -f .jd-npm.log .jd-npm.ec; ${legacy}; ` +
     `else rm -f .jd-npm.log .jd-npm.ec; [ "$ec" -eq 0 ] || exit "$ec"; fi`;
 }
-// Build install: force devDependencies IN. Build tooling (Vite, TypeScript, tailwind, Adonis's
-// assembler/ts-node-maintained) lives in devDependencies, but a proxy type sets NODE_ENV=production
-// in the build env, and npm omits dev deps under NODE_ENV=production — which breaks the build. So
-// the build install always includes dev; the runtime prune (--omit=dev) happens separately below.
+// Build install (host static types): force devDependencies IN. Build tooling (Vite, TypeScript,
+// tailwind) lives in devDependencies, but the build env may set NODE_ENV=production and npm omits
+// dev deps under NODE_ENV=production — which breaks the build. Container types use Railpack, which
+// handles this itself (NPM_CONFIG_PRODUCTION=false), so this only applies to the host build path.
 const NPM = npmInstall('--include=dev');
-const NPM_PROD = npmInstall('--omit=dev');
 
 export const TABLE = {
   react: {
@@ -52,21 +51,18 @@ export const TABLE = {
     build: null,
     artifact: '.',
   },
-  adonis: {
-    serve: 'proxy',
-    // `node ace build` copies package.json into build/ but NOT the lockfile; copy it in (if any)
-    // so the build-dir install stays deterministic, then install production deps there.
-    build: `${NPM} && node ace build && ([ -f package-lock.json ] && cp package-lock.json build/ || true) && cd build && ${NPM_PROD}`,
-    cwd: 'build',
-    run: ['node', 'bin/server.js'],
-    // Adonis is DB-backed: run migrations after build, before the server starts. Idempotent,
-    // so it's safe on every deploy. Part of the type preset — no per-app configuration needed.
-    release: 'node ace migration:run --force',
-  },
   // Container types: Railpack detects the package manager, language runtime, and build/start
   // commands itself and produces an OCI image — no hand-rolled build/run recipe. `nextjs` gets
   // its own entry only so the dashboard/CLI can show a Next.js icon and set the right auto-env;
   // `app` is the catch-all for anything Railpack can build (Node variants, Python, Go, …).
+  adonis: {
+    serve: 'container',
+    // Railpack builds Adonis (`node ace build`) but its generic start runs the *source* entry;
+    // the built server lives in build/, so override the start. Migrations (release) are baked in
+    // front of the start command by the engine and reach Postgres over the shared container network.
+    railpackStart: 'node build/bin/server.js',
+    release: 'node ace migration:run --force',
+  },
   nextjs: {
     serve: 'container',
   },

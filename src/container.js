@@ -10,11 +10,24 @@ import { buildLog } from './paths.js';
 
 const BUILDKIT = 'jd-buildkit';
 const BUILDKIT_HOST = `docker-container://${BUILDKIT}`;
+// Shared bridge network so app containers reach provisioned Postgres by container name (a
+// container's own 127.0.0.1 is NOT the host's — the localhost-published DB port is unreachable
+// from inside a container).
+const NET = 'jd-net';
 
 export const imageTag = (app, sha) => `justdeploy/${app}:${sha.slice(0, 12)}`;
 export const containerName = (app, sha) => `jd-${app}-${sha.slice(0, 12)}`;
 
 const docker = (args, opts = {}) => spawnSync('docker', args, { encoding: 'utf8', ...opts });
+
+// Ensure the shared network exists, and (idempotently) attach a container to it.
+export function ensureNetwork() {
+  if (docker(['network', 'inspect', NET]).status !== 0) docker(['network', 'create', NET]);
+}
+export function connectToNetwork(name) {
+  ensureNetwork();
+  docker(['network', 'connect', NET, name]); // no-op error if already attached
+}
 
 export function have(cmd) {
   return spawnSync('sh', ['-c', `command -v ${cmd}`], { encoding: 'utf8' }).status === 0;
@@ -30,9 +43,10 @@ export function ensureBuildkit() {
 }
 
 // Build `srcDir` into the app's image with Railpack. Streams build output to the app log.
-export async function build(logName, app, sha, srcDir) {
+export async function build(logName, app, sha, srcDir, startCmd) {
   ensureBuildkit();
-  await run(logName, srcDir, `railpack build . --name ${imageTag(app, sha)}`, { BUILDKIT_HOST }, buildLog(logName));
+  const start = startCmd ? ` --start-cmd ${JSON.stringify(startCmd)}` : ''; // e.g. Adonis → node build/bin/server.js
+  await run(logName, srcDir, `railpack build . --name ${imageTag(app, sha)}${start}`, { BUILDKIT_HOST }, buildLog(logName));
 }
 
 export const imageExists = (app, sha) => docker(['image', 'inspect', imageTag(app, sha)]).status === 0;
@@ -40,9 +54,10 @@ export const imageExists = (app, sha) => docker(['image', 'inspect', imageTag(ap
 // Run the app's image detached on a localhost port. The app must listen on $PORT (passed in env);
 // we publish 127.0.0.1:port:port so Caddy can reverse-proxy to it. `volumes` are `host:container`.
 export function runContainer(app, sha, port, env, volumes = []) {
+  ensureNetwork();
   const name = containerName(app, sha);
   docker(['rm', '-f', name]); // idempotent
-  const args = ['run', '-d', '--name', name, '--restart', 'unless-stopped'];
+  const args = ['run', '-d', '--name', name, '--restart', 'unless-stopped', '--network', NET];
   for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
   args.push('-p', `127.0.0.1:${port}:${port}`);
   for (const v of volumes) args.push('-v', v);

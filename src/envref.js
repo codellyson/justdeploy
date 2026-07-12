@@ -23,18 +23,22 @@ export const PG_REF_FIELDS = [
   'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGSSLMODE',
 ];
 
-// The fields a postgres resource exposes. Apps run as host processes, so the reachable host is
-// always 127.0.0.1 (the localhost-published port) — the same address the stored conn uses.
-function pgFields(info) {
+// The fields a postgres resource exposes, resolved for the CONSUMER's reachability:
+//   - host process → 127.0.0.1:<published port> (the localhost-bound port)
+//   - container    → <db container name>:5432 on the shared network (its own 127.0.0.1 ≠ host's)
+function pgFields(info, forContainer) {
   if (!info) return null;
-  const url = info.privateConn;
+  const host = forContainer ? info.name : '127.0.0.1';
+  const port = forContainer ? '5432' : String(info.port);
+  const q = info.tls ? '?sslmode=require' : '';
+  const url = `postgres://${info.user}:${info.password}@${host}:${port}/${info.dbName}${q}`;
   return {
-    PGHOST: '127.0.0.1', PGPORT: String(info.port), PGUSER: info.user,
+    PGHOST: host, PGPORT: port, PGUSER: info.user,
     PGPASSWORD: info.password, PGDATABASE: info.dbName,
     PGSSLMODE: info.tls ? 'require' : 'disable',
     DATABASE_URL: url, DATABASE_PRIVATE_URL: url, DATABASE_PUBLIC_URL: info.publicConn,
     // friendly aliases for the same values
-    HOST: '127.0.0.1', PORT: String(info.port), USER: info.user, PASSWORD: info.password,
+    HOST: host, PORT: port, USER: info.user, PASSWORD: info.password,
     DATABASE: info.dbName, NAME: info.dbName, URL: url, SSLMODE: info.tls ? 'require' : 'disable',
   };
 }
@@ -51,6 +55,7 @@ function sources(database) {
 export function resolveEnv(database, appName, self) {
   const cache = new Map();   // `${app}\0${key}` -> resolved value
   const stack = new Set();   // in-progress, for cycle detection
+  const forContainer = db.getApp(database, appName)?.serve === 'container'; // DB reachability
 
   const rawEnvOf = (app) => (app === appName ? self : db.getEnv(database, app));
 
@@ -82,7 +87,7 @@ export function resolveEnv(database, appName, self) {
       // ${{Source.KEY}} — a postgres resource first, then another app
       const res = db.getResource(database, src);
       if (res && res.kind === 'postgres') {
-        const fields = pgFields(pg.info(database, src));
+        const fields = pgFields(pg.info(database, src), forContainer);
         if (!fields || !(key in fields)) {
           fail(owner, token, `postgres '${src}' has no field '${key}' — try PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE, or DATABASE_URL`);
         }
