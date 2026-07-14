@@ -139,7 +139,7 @@ function triggerFromPush(database, p) {
   const set = new Set(urls);
   const ref = p.ref, def = repo.default_branch || project.default_branch;
   let apps = db.listApps(database).filter((a) =>
-    a.repo && set.has(normRepo(a.repo)) && (a.serve === 'static' || a.serve === 'proxy'));
+    a.repo && set.has(normRepo(a.repo)) && a.serve !== 'resource');
   if (ref && def && ref !== `refs/heads/${def}`) apps = []; // push wasn't to the default branch
   const names = [];
   for (const a of apps) { kickDeploy(database, a.name); names.push(a.name); }
