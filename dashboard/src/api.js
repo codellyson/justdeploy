@@ -1,3 +1,5 @@
+import { track } from './lib/analytics';
+
 // Thin client over the JustDeploy dashboard API. Same-origin, cookie session.
 async function req(path, opts = {}) {
   const res = await fetch('/api' + path, {
@@ -67,6 +69,51 @@ export const api = {
   stream: (name, kind = 'build') => new EventSource(`/api/apps/${name}/stream?kind=${kind}`),
 };
 
+// Every mutating action is tracked in Aptabase from here, so no call site can forget to. Each
+// entry maps an api method to a SAFE props extractor — resource names and enums only, NEVER
+// secrets (passwords, tokens, env values, allow-list IPs, backup filenames). Read-only methods
+// are absent and thus never tracked. Events fire on success only, so validation failures and
+// wrong-password attempts don't pollute usage stats.
+const ACTIONS = {
+  login: () => ({}),
+  logout: () => ({}),
+  createProject: (name) => ({ name }),
+  removeProject: (name) => ({ name }),
+  createApp: (body) => ({ type: body?.type, serve: body?.serve }),
+  deploy: (name) => ({ name }),
+  rollback: (name, sha) => ({ name, pinned: !!sha }),
+  remove: (name) => ({ name }),
+  setEnv: (name) => ({ name }),
+  setConfig: (name) => ({ name }),
+  removeResource: (name) => ({ name }),
+  restartResource: (name) => ({ name }),
+  resetResourcePassword: (name) => ({ name }),
+  exposeResource: (name, isPublic) => ({ name, public: !!isPublic }),
+  setDbHost: () => ({}),
+  setBaseDomain: () => ({}),
+  dismissOnboarding: () => ({}),
+  setPassword: () => ({}),
+  setBackupConfig: () => ({}),
+  runBackup: (local) => ({ local: !!local }),
+  setBackupSchedule: (interval) => ({ interval }),
+  restoreBackup: () => ({}),
+  enableWebhook: () => ({}),
+  disableWebhook: () => ({}),
+  reconcile: () => ({}),
+  gc: () => ({}),
+  githubConnect: () => ({}),
+  githubDisconnect: () => ({}),
+};
+
+for (const [name, safeProps] of Object.entries(ACTIONS)) {
+  const orig = api[name];
+  api[name] = (...args) => {
+    const out = orig(...args);
+    Promise.resolve(out).then(() => track(name, safeProps(...args)), () => {});
+    return out;
+  };
+}
+
 // Launch the GitHub App create flow: fetch the pre-filled manifest, then POST it to GitHub as a
 // top-level form navigation (GitHub shows "Create GitHub App", then redirects back to our callback).
 export async function connectGithubApp() {
@@ -80,5 +127,6 @@ export async function connectGithubApp() {
   input.value = JSON.stringify(manifest);
   form.appendChild(input);
   document.body.appendChild(form);
+  track('githubAppConnect');
   form.submit();
 }
