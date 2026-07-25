@@ -417,6 +417,34 @@ async function api(database, req, res, path) {
     return send(res, 200, { ok: true, triggered });
   }
 
+  // GitHub redirects the browser here after "Create GitHub App" — exchange the code, store creds,
+  // then bounce to the install page so the user picks repos. This MUST be public: it's a cross-site
+  // top-level navigation back from github.com, which doesn't reliably carry the SameSite=Lax session
+  // cookie, so an auth gate would 401 it. Its protection is the one-time `state` nonce, which only
+  // the session that started the flow (via the authed /app/new) knows.
+  if (path === '/api/github/app/callback' && req.method === 'GET') {
+    const q = new URL(req.url, 'http://x').searchParams;
+    const code = q.get('code'), state = q.get('state');
+    if (!code || !state || state !== db.getSetting(database, 'gh_app_state')) {
+      res.writeHead(302, { Location: '/settings?github=error' }); return res.end();
+    }
+    try {
+      const app = await github.convertManifest(code);
+      db.setSetting(database, 'gh_app_id', String(app.id));
+      db.setSetting(database, 'gh_app_slug', app.slug);
+      db.setSetting(database, 'gh_app_pem', app.pem);
+      db.setSetting(database, 'gh_app_webhook_secret', app.webhook_secret || '');
+      db.setSetting(database, 'gh_app_client_id', app.client_id || '');
+      db.setSetting(database, 'gh_app_client_secret', app.client_secret || '');
+      db.setSetting(database, 'gh_app_state', '');
+      db.setSetting(database, 'github_token', ''); // App supersedes the PAT
+      res.writeHead(302, { Location: `https://github.com/apps/${app.slug}/installations/new` });
+      return res.end();
+    } catch (e) {
+      res.writeHead(302, { Location: '/settings?github=error&msg=' + encodeURIComponent(e.message) }); return res.end();
+    }
+  }
+
   // --- everything below requires auth ---
   if (!authed()) return send(res, 401, { error: 'unauthorized' });
 
@@ -614,30 +642,6 @@ async function api(database, req, res, path) {
     db.setSetting(database, 'gh_app_state', state);
     const manifest = github.appManifest(domain, randomBytes(3).toString('hex'));
     return send(res, 200, { action: `https://github.com/settings/apps/new?state=${state}`, manifest });
-  }
-  // GitHub redirects the browser here after "Create GitHub App" — exchange the code, store creds,
-  // then bounce to the install page so the user picks repos.
-  if (path === '/api/github/app/callback' && req.method === 'GET') {
-    const q = new URL(req.url, 'http://x').searchParams;
-    const code = q.get('code'), state = q.get('state');
-    if (!code || !state || state !== db.getSetting(database, 'gh_app_state')) {
-      res.writeHead(302, { Location: '/settings?github=error' }); return res.end();
-    }
-    try {
-      const app = await github.convertManifest(code);
-      db.setSetting(database, 'gh_app_id', String(app.id));
-      db.setSetting(database, 'gh_app_slug', app.slug);
-      db.setSetting(database, 'gh_app_pem', app.pem);
-      db.setSetting(database, 'gh_app_webhook_secret', app.webhook_secret || '');
-      db.setSetting(database, 'gh_app_client_id', app.client_id || '');
-      db.setSetting(database, 'gh_app_client_secret', app.client_secret || '');
-      db.setSetting(database, 'gh_app_state', '');
-      db.setSetting(database, 'github_token', ''); // App supersedes the PAT
-      res.writeHead(302, { Location: `https://github.com/apps/${app.slug}/installations/new` });
-      return res.end();
-    } catch (e) {
-      res.writeHead(302, { Location: '/settings?github=error&msg=' + encodeURIComponent(e.message) }); return res.end();
-    }
   }
   if (path === '/api/github' && req.method === 'POST') { // PAT fallback
     const { token } = await body(req);
