@@ -57,6 +57,7 @@ const TYPE_ICON = {
   static: LuFileCode2,
   adonis: SiAdonisjs,
   nextjs: SiNextdotjs,
+  app: LuServer,
   postgres: SiPostgresql,
 };
 

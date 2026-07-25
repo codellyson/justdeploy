@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, rmSync, symlinkSync, readFileSync, writeFileSync
 import { join, basename, dirname } from 'node:path';
 import { row, autoEnv } from './table.js';
 import { resolveEnv } from './envref.js';
-import { repoDir, dataDir, SRV, buildLog, runtimeLog, releasesDir, releaseDir, currentLink } from './paths.js';
+import { repoDir, dataDir, SRV, buildLog, runtimeLog, releasesDir, releaseDir, currentLink, normSubdir } from './paths.js';
 import * as db from './db.js';
 import * as caddy from './caddy.js';
 import * as proc from './proc.js';
@@ -57,9 +57,10 @@ function pruneReleases(name) {
 
 // The dir an app runs from. With a sha → that release; otherwise the current release (falling
 // back to repo/ for apps not yet migrated to the release layout).
-function runDir(name, type, sha) {
+function runDir(name, type, sha, subdir = '') {
   const r = row(type);
-  const base = sha ? releaseDir(name, sha) : (existsSync(currentLink(name)) ? currentLink(name) : repoDir(name));
+  let base = sha ? releaseDir(name, sha) : (existsSync(currentLink(name)) ? currentLink(name) : repoDir(name));
+  if (subdir) base = join(base, subdir);                 // monorepo root directory
   return r.cwd && r.cwd !== '.' ? join(base, r.cwd) : base;
 }
 
@@ -93,24 +94,29 @@ async function buildRelease(database, name, type, sha) {
   // Build with the app's env injected — some builds validate/need it (Adonis `node ace build`
   // boots the app; Vite/Next inline VITE_/NEXT_PUBLIC_ vars at build time).
   const app = db.getApp(database, name);
+  const subdir = normSubdir(app.subdir);
+  const buildDir = subdir ? join(rel, subdir) : rel;     // monorepo: build from the root directory
+  if (subdir && !existsSync(buildDir)) {
+    throw new Error(`root directory "${subdir}" not found in the repo at ${sha.slice(0, 12)}`);
+  }
   const buildEnv = appEnv(database, name, type, app.live_port || 4000);
-  if (r.build) await run(name, rel, r.build, buildEnv, blog);
+  if (r.build) await run(name, buildDir, r.build, buildEnv, blog);
   if (r.postBuild === 'next-standalone-copy') {
     // Only when the app opted into standalone output: it doesn't copy static assets or public/
     // (the classic broken-CSS trap). If there's no standalone dir, we run via `next start`, which
     // serves those itself — so skip the copy rather than fail the build.
-    await run(name, rel, 'if [ -d .next/standalone ]; then cp -r .next/static .next/standalone/.next/static; cp -r public .next/standalone/public 2>/dev/null || true; fi', undefined, blog);
+    await run(name, buildDir, 'if [ -d .next/standalone ]; then cp -r .next/static .next/standalone/.next/static; cp -r public .next/standalone/public 2>/dev/null || true; fi', undefined, blog);
   }
-  setupPersistence(name, type, sha, app.persist); // stable data dirs before the app runs
+  setupPersistence(name, type, sha, app.persist, subdir); // stable data dirs before the app runs
   writeFileSync(marker, sha);
   return rel;
 }
 
 // Redirect runtime data dirs (e.g. `tmp` holding a SQLite file) inside a release to the shared
 // /srv/<name>/data area, so data persists across releases. `persist` is a comma-separated list.
-function setupPersistence(name, type, sha, persist) {
+function setupPersistence(name, type, sha, persist, subdir = '') {
   if (!persist) return;
-  const base = runDir(name, type, sha);
+  const base = runDir(name, type, sha, subdir);
   for (const p of persist.split(',').map((s) => s.trim()).filter(Boolean)) {
     const stable = join(dataDir(name), p);
     const link = join(base, p);
@@ -126,7 +132,7 @@ async function runRelease(database, name, type, sha) {
   const app = db.getApp(database, name);
   if (!app.release_cmd) return;
   const env = appEnv(database, name, type, app.live_port || 4000);
-  await run(name, runDir(name, type, sha), app.release_cmd, env, buildLog(name));
+  await run(name, runDir(name, type, sha, normSubdir(app.subdir)), app.release_cmd, env, buildLog(name));
 }
 
 // --- container serve model (Railpack image + Docker) ----------------------
@@ -156,12 +162,18 @@ function containerVolumes(name, persist) {
 // health-check it, repoint Caddy, then stop the old one. Same invariant as the host swap.
 async function deployContainer(database, name, app, sha) {
   const src = await archiveSource(name, sha);
+  // Monorepo root directory: Railpack builds `.` from its cwd, so point it at the subfolder.
+  const subdir = normSubdir(app.subdir);
+  const buildSrc = subdir ? join(src, subdir) : src;
+  if (subdir && !existsSync(buildSrc)) {
+    throw new Error(`root directory "${subdir}" not found in the repo at ${sha.slice(0, 12)}`);
+  }
   // The container's start command: the type's runner (Adonis → node build/bin/server.js; else
   // Railpack's detected default), with the release command (migrations) baked in front so it runs
   // — idempotently — before the server on every start. Falls back to exec-less default if neither.
   const appStart = row(app.type).railpackStart || null;
   const startCmd = app.release_cmd && appStart ? `${app.release_cmd} && ${appStart}` : appStart;
-  await container.build(name, name, sha, src, startCmd);  // railpack build → image tag
+  await container.build(name, name, sha, buildSrc, startCmd);  // railpack build → image tag
   const port = db.allocatePort(database);
   const env = appEnv(database, name, app.type, port);    // includes PORT=<port>, ${{ }} resolved (container-aware)
   const volumes = containerVolumes(name, app.persist);
@@ -292,7 +304,7 @@ async function swap(database, app, sha) {
   db.setPorts(database, app.name, { live: app.live_port, pending: port, pid: app.live_pid });
 
   const env = appEnv(database, app.name, app.type, port);
-  const cwd = runDir(app.name, app.type, sha);
+  const cwd = runDir(app.name, app.type, sha, normSubdir(app.subdir));
   const newPid = proc.start(app.name, { cwd, argv: r.run, env });
 
   const healthy = await proc.healthCheck(port, { path: app.health_path, timeout: app.health_timeout });
@@ -355,7 +367,7 @@ export async function restart(database, name) {
   if (!app || app.serve !== 'proxy' || !app.live_port) return false;
   const r = row(app.type);
   const env = appEnv(database, name, app.type, app.live_port);
-  const cwd = runDir(name, app.type); // current release (or repo/ pre-migration)
+  const cwd = runDir(name, app.type, undefined, normSubdir(app.subdir)); // current release (or repo/ pre-migration)
   const pid = proc.start(name, { cwd, argv: r.run, env });
   const healthy = await proc.healthCheck(app.live_port, { path: app.health_path, timeout: app.health_timeout });
   if (!healthy) { await proc.drainAndKill(pid, 0); return false; }

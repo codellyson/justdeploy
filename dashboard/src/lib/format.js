@@ -33,6 +33,7 @@ export const TYPE_LABEL = {
   static: 'Static',
   adonis: 'AdonisJS',
   nextjs: 'Next.js',
+  app: 'Container',
   postgres: 'Postgres',
 };
 export const typeLabel = (t) => TYPE_LABEL[t] || t;

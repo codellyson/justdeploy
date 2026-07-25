@@ -19,7 +19,7 @@ import * as backup from './backup.js';
 import * as s3 from './s3.js';
 import { TABLE, TYPES, row } from './table.js';
 import { PG_REF_FIELDS } from './envref.js';
-import { logFile, buildLog, runtimeLog } from './paths.js';
+import { logFile, buildLog, runtimeLog, normSubdir } from './paths.js';
 
 // The built Vite/React dashboard (dashboard/dist). Build it with `justdeploy dashboard build`.
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -665,9 +665,11 @@ async function api(database, req, res, path) {
   }
 
   if (path === '/api/apps' && req.method === 'POST') {
-    const { name, type, domain, repo, release, persist, project } = await body(req);
+    const { name, type, domain, repo, release, persist, subdir, project } = await body(req);
     if (!TYPES.includes(type)) return send(res, 400, { error: 'bad type' });
     if (!name || !/^[a-z0-9-]+$/.test(name)) return send(res, 400, { error: 'name must be [a-z0-9-]' });
+    let root;
+    try { root = normSubdir(subdir) || null; } catch (e) { return send(res, 400, { error: e.message }); }
     const serve = row(type).serve;
     const proj = (String(project || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')) || 'default';
     db.createProject(database, proj, now()); // ensure the project exists
@@ -694,7 +696,7 @@ async function api(database, req, res, path) {
     db.upsertApp(database, {
       name, type, domain, repo, serve,
       // The type carries its own release command (Adonis → migrations); an explicit one overrides.
-      release_cmd: release || row(type).release || null, persist: persist || null, project: proj, created_at: now(),
+      release_cmd: release || row(type).release || null, persist: persist || null, subdir: root, project: proj, created_at: now(),
     });
     if (type === 'adonis') db.setEnv(database, name, 'APP_KEY', randomBytes(32).toString('base64url'));
 
@@ -726,10 +728,14 @@ async function api(database, req, res, path) {
     }
 
     if (sub === 'config' && req.method === 'PUT') {
-      const { release, persist, health_path } = await body(req);
+      const { release, persist, health_path, subdir } = await body(req);
+      let root;
+      try { root = subdir === undefined ? undefined : (normSubdir(subdir) || null); }
+      catch (e) { return send(res, 400, { error: e.message }); }
       db.updateAppConfig(database, name, {
         release_cmd: release ?? null, persist: persist ?? null,
         ...(health_path ? { health_path } : {}),
+        ...(root === undefined ? {} : { subdir: root }),
       });
       return send(res, 200, { ok: true });
     }

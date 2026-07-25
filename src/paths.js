@@ -21,6 +21,20 @@ export const releasesDir = (name) => join(SRV, name, 'releases');
 export const releaseDir = (name, sha) => join(SRV, name, 'releases', sha);
 export const currentLink = (name) => join(SRV, name, 'current');
 
+// A per-app "root directory": the subfolder of the repo to build/serve from (monorepos —
+// e.g. a repo with server/ and client/). Returns a clean relative path with no leading slash
+// and no `..` escape, or '' for none. Throws on traversal so a bad value can't reach outside
+// the release tree.
+export function normSubdir(subdir) {
+  if (!subdir) return '';
+  const clean = String(subdir).trim().replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  if (!clean || clean === '.') return '';
+  if (clean.split('/').some((seg) => seg === '..' || seg === '' || seg === '.')) {
+    throw new Error(`invalid root directory "${subdir}" — must be a relative path inside the repo`);
+  }
+  return clean;
+}
+
 // Caddy admin API — driven live, no config file on disk, no SIGHUP.
 export const CADDY_ADMIN = process.env.CADDY_ADMIN || 'http://localhost:2019';
 

@@ -7,8 +7,8 @@ import { TypeIcon, Icon } from '../components/icons';
 import { GithubSource } from '../components/GithubSource';
 import { cx, typeLabel, slug, suggestName, nameFromRepo, releaseHint, persistHint } from '../lib/format';
 
-const TYPES = ['react', 'vite', 'static', 'adonis', 'nextjs', 'postgres'];
-const PROXY = ['adonis', 'nextjs'];
+const TYPES = ['react', 'vite', 'static', 'adonis', 'nextjs', 'app', 'postgres'];
+const CONTAINER = ['adonis', 'nextjs', 'app']; // Railpack-built; take a release cmd + persist dirs
 const needsRepoDomain = (t) => t && t !== 'postgres';
 
 function StepDot({ n, active }) {
@@ -68,8 +68,8 @@ export function NewProject() {
     try {
       const proj = (f.project ?? presetProject).trim();
       const body = { type, name: (f.name || '').trim(), project: proj };
-      if (needsRepoDomain(type)) { body.repo = (f.repo || '').trim(); body.domain = (f.domain || '').trim(); }
-      if (PROXY.includes(type)) { body.release = (f.release || '').trim(); body.persist = (f.persist || '').trim(); }
+      if (needsRepoDomain(type)) { body.repo = (f.repo || '').trim(); body.domain = (f.domain || '').trim(); body.subdir = (f.subdir || '').trim(); }
+      if (CONTAINER.includes(type)) { body.release = (f.release || '').trim(); body.persist = (f.persist || '').trim(); }
       const back = proj && proj !== 'default' ? `/projects/${proj}` : '/';
       const r = await api.createApp(body);
       invalidate();
@@ -137,10 +137,14 @@ export function NewProject() {
                   <span className="min-w-0 flex-1 truncate font-mono text-sm text-accent">{f.domain}</span>
                 </div>
               )}
+              <div className="flex flex-col gap-1.5">
+                <label className="label-tiny">Root directory <span className="font-normal normal-case tracking-normal text-muted/70">— optional; the repo subfolder to build from (monorepos)</span></label>
+                <input value={f.subdir || ''} onChange={set('subdir')} placeholder="e.g. server" className="field font-mono text-[0.8rem]" />
+              </div>
             </>
           )}
 
-          {PROXY.includes(type) && (
+          {CONTAINER.includes(type) && (
             <div className="flex flex-wrap gap-4">
               <div className="flex flex-1 basis-52 flex-col gap-1.5"><label className="label-tiny">Release command {f.release ? <span className="font-normal normal-case tracking-normal text-muted/70">— preset for this type, edit if you like</span> : <span className="font-normal normal-case tracking-normal text-muted/70">— optional</span>}</label><input value={f.release || ''} onChange={(e) => { setTouched((t) => ({ ...t, release: true })); setF((s) => ({ ...s, release: e.target.value })); }} placeholder={releaseHint(type)} className="field font-mono text-[0.8rem]" /></div>
               <div className="flex flex-1 basis-52 flex-col gap-1.5"><label className="label-tiny">Persist dirs (optional)</label><input value={f.persist || ''} onChange={set('persist')} placeholder={persistHint(type)} className="field font-mono text-[0.8rem]" /></div>

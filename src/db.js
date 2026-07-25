@@ -74,6 +74,7 @@ export function open(file = STATE_DB) {
     'ALTER TABLE apps ADD COLUMN artifact TEXT',
     'ALTER TABLE apps ADD COLUMN project TEXT',
     'ALTER TABLE resources ADD COLUMN project TEXT',
+    'ALTER TABLE apps ADD COLUMN subdir TEXT',
   ]) { try { db.exec(alter); } catch { /* column already exists */ } }
   // Every service belongs to a project; ungrouped ones (and older dbs) land in 'default'.
   db.prepare("INSERT INTO projects (name, created_at) VALUES ('default', ?) ON CONFLICT(name) DO NOTHING")
@@ -133,8 +134,8 @@ export const listApps = (db) =>
 
 export function upsertApp(db, a) {
   db.prepare(`
-    INSERT INTO apps (name, type, domain, repo, serve, health_path, health_timeout, drain_seconds, release_cmd, persist, artifact, project, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO apps (name, type, domain, repo, serve, health_path, health_timeout, drain_seconds, release_cmd, persist, artifact, subdir, project, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET
       type=excluded.type, domain=excluded.domain, repo=excluded.repo, serve=excluded.serve,
       health_path=excluded.health_path, health_timeout=excluded.health_timeout,
@@ -142,18 +143,19 @@ export function upsertApp(db, a) {
       release_cmd=coalesce(excluded.release_cmd, apps.release_cmd),
       persist=coalesce(excluded.persist, apps.persist),
       artifact=coalesce(excluded.artifact, apps.artifact),
+      subdir=coalesce(excluded.subdir, apps.subdir),
       project=coalesce(excluded.project, apps.project)
   `).run(
     a.name, a.type, a.domain ?? null, a.repo ?? null, a.serve,
     a.health_path ?? '/', a.health_timeout ?? 30, a.drain_seconds ?? 10,
-    a.release_cmd ?? null, a.persist ?? null, a.artifact ?? null, a.project ?? 'default', a.created_at,
+    a.release_cmd ?? null, a.persist ?? null, a.artifact ?? null, a.subdir ?? null, a.project ?? 'default', a.created_at,
   );
 }
 
 // Update just the deploy-config fields (release command, persist paths, health path).
 export function updateAppConfig(db, name, f) {
   const sets = [], vals = [];
-  for (const k of ['release_cmd', 'persist', 'health_path']) {
+  for (const k of ['release_cmd', 'persist', 'health_path', 'subdir']) {
     if (f[k] !== undefined) { sets.push(`${k}=?`); vals.push(f[k]); }
   }
   if (!sets.length) return;

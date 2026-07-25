@@ -5,6 +5,7 @@
 //   justdeploy doctor                                       check prerequisites (installs nothing)
 //   justdeploy uninstall [--keep-data] [--keep-caddy]       remove JustDeploy (prompts; full by default)
 //   justdeploy add <repo> [--type T] [--domain D] [--name N] register + deploy (type + domain inferred from the repo)
+//                          [--subdir path]                    build/serve from a repo subfolder (monorepos)
 //   justdeploy deploy [name]                                run the deploy loop
 //   justdeploy ls                                           list apps and their state
 //   justdeploy logs <name> [-f]                             tail an app's log
@@ -13,6 +14,7 @@
 //   justdeploy rm <name> [--keep-data]                      tear down an app or resource
 //   justdeploy rollback <name>                              redeploy the previous successful commit
 //   justdeploy set <name> [--release "cmd"] [--persist a,b] configure release cmd / persisted dirs
+//                          [--subdir path]                    set the monorepo root directory
 //   justdeploy webhook [--rotate]                           enable git-push auto-deploy; print setup
 //   justdeploy backup config --endpoint U --bucket B ...    set the S3/R2 destination (bring your own bucket)
 //   justdeploy backup [--keep N] [--local] [--schedule I]   snapshot state.db + data + pg, upload to S3/R2
@@ -36,7 +38,7 @@ import * as s3 from '../src/s3.js';
 import * as github from '../src/github.js';
 import * as setup from '../src/setup.js';
 import { row, TYPES } from '../src/table.js';
-import { logFile, buildLog, runtimeLog, HOME, SRV } from '../src/paths.js';
+import { logFile, buildLog, runtimeLog, HOME, SRV, normSubdir } from '../src/paths.js';
 import * as config from '../src/config.js';
 
 const now = () => new Date().toISOString();
@@ -119,12 +121,15 @@ async function cmdAdd(a) {
 
   // Validate the shape; the record lives in the state db (source of truth), not a yml file.
   config.validate({ name, type, domain, repo, release: a.release, persist: a.persist });
+  // --subdir (alias --root) is the repo folder to build/serve from (monorepos). normSubdir throws
+  // on traversal, so a bad value fails here rather than mid-build.
+  const subdir = normSubdir(a.subdir ?? a.root) || null;
   db.upsertApp(database, {
     name, type, domain, repo, serve,
     // The type carries its own release command (Adonis → migrations); --release overrides it.
     release_cmd: a.release ?? row(type).release ?? null, persist: a.persist ?? null,
     // --dir serves a subfolder of the repo for static apps (e.g. docs/); default is the type's artifact.
-    artifact: a.dir ?? null, created_at: now(),
+    artifact: a.dir ?? null, subdir, created_at: now(),
   });
 
   // Type-specific auto-fill so the documented traps never happen.
@@ -301,14 +306,15 @@ async function cmdRollback(a) {
 
 function cmdSet(a) {
   const name = a._[0];
-  if (!name) die('usage: justdeploy set <name> [--release "cmd"] [--persist "a,b"] [--health-path /p]');
+  if (!name) die('usage: justdeploy set <name> [--release "cmd"] [--persist "a,b"] [--health-path /p] [--subdir path]');
   const database = db.open();
   if (!db.getApp(database, name)) die(`no such app: ${name}`);
   const f = {};
   if ('release' in a) f.release_cmd = a.release || null;
   if ('persist' in a) f.persist = a.persist || null;
   if ('health-path' in a) f.health_path = a['health-path'] || '/';
-  if (!Object.keys(f).length) die('nothing to set — pass --release, --persist, or --health-path');
+  if ('subdir' in a || 'root' in a) f.subdir = normSubdir(a.subdir ?? a.root) || null;
+  if (!Object.keys(f).length) die('nothing to set — pass --release, --persist, --health-path, or --subdir');
   db.updateAppConfig(database, name, f);
   console.log(`updated ${name} — redeploy to apply`);
 }

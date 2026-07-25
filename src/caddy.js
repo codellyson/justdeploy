@@ -2,7 +2,7 @@
 // only source) and POST it to /load as text/caddyfile — Caddy adapts + applies it with a
 // graceful (zero-downtime) reload, so in-flight requests on the old upstream drain naturally.
 // No config file on disk, no SIGHUP.
-import { CADDY_ADMIN, repoDir, currentLink } from './paths.js';
+import { CADDY_ADMIN, repoDir, currentLink, normSubdir } from './paths.js';
 import { row } from './table.js';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -22,7 +22,8 @@ export function generate(apps, dashboard) {
       const artifact = a.artifact || row(a.type).artifact;
       // Serve the current release (rollback = re-symlink `current`, no reload). Fall back to
       // repo/ for apps not yet migrated to the release layout.
-      const base = existsSync(currentLink(a.name)) ? currentLink(a.name) : repoDir(a.name);
+      let base = existsSync(currentLink(a.name)) ? currentLink(a.name) : repoDir(a.name);
+      if (a.subdir) base = join(base, normSubdir(a.subdir)); // monorepo root directory
       const root = artifact === '.' ? base : join(base, artifact);
       blocks.push(
         `${a.domain} {\n` +
