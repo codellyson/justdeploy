@@ -409,23 +409,29 @@ export async function api(database, req, res, path) {
   if (path === '/api/webhook' || path.startsWith('/api/webhook/')) {
     if (req.method !== 'POST') return send(res, 405, { error: 'POST only' });
     const secret = db.getSetting(database, 'webhook_secret');       // manual per-repo webhook
-    const appSecret = db.getSetting(database, 'gh_app_webhook_secret'); // GitHub App webhook
-    if (!secret && !appSecret) return send(res, 503, { error: 'webhook not enabled' });
+    const appSecrets = db.listGithubWebhookSecrets(database);       // each user's GitHub App secret
+    if (!secret && !appSecrets.length) return send(res, 503, { error: 'webhook not enabled' });
 
     const raw = await rawBody(req);
     const urlSecret = path.startsWith('/api/webhook/') ? path.slice('/api/webhook/'.length) : null;
     const sig = req.headers['x-hub-signature-256'];
-    const ok = (sig && ((secret && auth.verifyHmac(secret, raw, sig)) || (appSecret && auth.verifyHmac(appSecret, raw, sig))))
+    // Which user's App signed this? (null for the shared manual webhook.)
+    const appMatch = sig ? appSecrets.find((s) => auth.verifyHmac(s.secret, raw, sig)) : null;
+    const ok = (sig && ((secret && auth.verifyHmac(secret, raw, sig)) || appMatch))
       || (urlSecret && secret && auth.secretEq(urlSecret, secret));
     if (!ok) return send(res, 401, { error: 'bad signature' });
 
     const event = req.headers['x-github-event'] || req.headers['x-gitlab-event'] || req.headers['x-gitea-event'];
     let payload; try { payload = JSON.parse(raw || '{}'); } catch { payload = {}; }
 
-    // GitHub App lifecycle: capture / clear the installation id (which repos we can clone).
+    // GitHub App lifecycle: record the installation id on the owning user's row (match by App id,
+    // falling back to whichever user's secret verified this delivery).
     if (event === 'installation' || event === 'installation_repositories') {
-      if (event === 'installation' && payload.action === 'deleted') db.setSetting(database, 'gh_app_installation_id', '');
-      else if (payload.installation?.id) db.setSetting(database, 'gh_app_installation_id', String(payload.installation.id));
+      const owner = db.findUserByGhAppId(database, payload.installation?.app_id) || appMatch?.username;
+      if (owner) {
+        if (event === 'installation' && payload.action === 'deleted') db.setUserGithub(database, owner, { gh_app_installation_id: '' });
+        else if (payload.installation?.id) db.setUserGithub(database, owner, { gh_app_installation_id: String(payload.installation.id) });
+      }
       return send(res, 200, { ok: true, event, action: payload.action });
     }
     // Only push events deploy; acknowledge pings and others without acting.
@@ -443,19 +449,19 @@ export async function api(database, req, res, path) {
   if (path === '/api/github/app/callback' && req.method === 'GET') {
     const q = new URL(req.url, 'http://x').searchParams;
     const code = q.get('code'), state = q.get('state');
-    if (!code || !state || state !== db.getSetting(database, 'gh_app_state')) {
+    // The state nonce identifies which user started the flow (it can't rely on the session cookie).
+    const owner = code && state && db.findUserByGhState(database, state);
+    if (!owner) {
       res.writeHead(302, { Location: '/settings?github=error' }); return res.end();
     }
     try {
       const app = await github.convertManifest(code);
-      db.setSetting(database, 'gh_app_id', String(app.id));
-      db.setSetting(database, 'gh_app_slug', app.slug);
-      db.setSetting(database, 'gh_app_pem', app.pem);
-      db.setSetting(database, 'gh_app_webhook_secret', app.webhook_secret || '');
-      db.setSetting(database, 'gh_app_client_id', app.client_id || '');
-      db.setSetting(database, 'gh_app_client_secret', app.client_secret || '');
-      db.setSetting(database, 'gh_app_state', '');
-      db.setSetting(database, 'github_token', ''); // App supersedes the PAT
+      db.setUserGithub(database, owner, {
+        gh_app_id: String(app.id), gh_app_slug: app.slug, gh_app_pem: app.pem,
+        gh_app_webhook_secret: app.webhook_secret || '', gh_app_client_id: app.client_id || '',
+        gh_app_client_secret: app.client_secret || '', gh_app_state: '',
+        github_token: '', // App supersedes the PAT
+      });
       res.writeHead(302, { Location: `https://github.com/apps/${app.slug}/installations/new` });
       return res.end();
     } catch (e) {
@@ -482,7 +488,7 @@ export async function api(database, req, res, path) {
     '/api/settings/base-domain', '/api/settings/public-host', '/api/settings/backup',
     '/api/settings/webhook', '/api/backups', '/api/host', '/api/doctor', '/api/onboarding/dismiss',
   ]);
-  const ADMIN_PREFIX = ['/api/backup/', '/api/maintenance/', '/api/github', '/api/users'];
+  const ADMIN_PREFIX = ['/api/backup/', '/api/maintenance/', '/api/users'];
   if (!isAdmin && (ADMIN_EXACT.has(path) || ADMIN_PREFIX.some((p) => path.startsWith(p)))) {
     return send(res, 403, { error: 'admins only' });
   }
@@ -512,8 +518,8 @@ export async function api(database, req, res, path) {
       // First-run onboarding state (the setup wizard reads these to know what's left).
       baseDomainSet: !!db.getSetting(database, 'base_domain'),
       publicHost: db.getSetting(database, 'public_host') || '',
-      github: github.connection(database).mode !== 'none',
-      githubLogin: db.getSetting(database, 'github_login') || null,
+      github: github.connection(database, user.username).mode !== 'none',
+      githubLogin: db.getUserGithub(database, user.username).github_login || null,
       onboardingDismissed: db.getSetting(database, 'onboarding_dismissed') === '1',
     });
   }
@@ -731,26 +737,27 @@ export async function api(database, req, res, path) {
     catch (e) { return send(res, 500, { error: e.message }); }
   }
 
-  // --- GitHub source connection (App preferred, PAT fallback) ---
+  // --- GitHub source connection (per-user; App preferred, PAT fallback) ---
   if (path === '/api/github' && req.method === 'GET') {
-    const c = github.connection(database);
+    const c = github.connection(database, user.username);
     if (c.mode === 'app') {
       c.connected = true;
       c.installUrl = c.slug ? `https://github.com/apps/${c.slug}/installations/new` : null;
       return send(res, 200, c);
     }
     if (c.mode === 'pat') {
-      try { const me = await github.whoami(db.getSetting(database, 'github_token')); return send(res, 200, { ...c, connected: true, login: me.login, avatar: me.avatar }); }
+      try { const me = await github.whoami(db.getUserGithub(database, user.username).github_token); return send(res, 200, { ...c, connected: true, login: me.login, avatar: me.avatar }); }
       catch { return send(res, 200, { ...c, connected: false, error: 'token invalid or expired' }); }
     }
     return send(res, 200, { mode: 'none', connected: false });
   }
-  // Start the GitHub App create flow: return the manifest + the URL the browser POSTs it to.
+  // Start the GitHub App create flow: return the manifest + the URL the browser POSTs it to. The
+  // state nonce is stored on THIS user's row so the (public) callback can route creds back to them.
   if (path === '/api/github/app/new' && req.method === 'GET') {
     const domain = db.getSetting(database, 'dashboard_domain');
     if (!domain) return send(res, 400, { error: 'set the dashboard domain first (it needs a public URL for the webhook + callback)' });
     const state = randomBytes(16).toString('hex');
-    db.setSetting(database, 'gh_app_state', state);
+    db.setUserGithub(database, user.username, { gh_app_state: state });
     const manifest = github.appManifest(domain, randomBytes(3).toString('hex'));
     return send(res, 200, { action: `https://github.com/settings/apps/new?state=${state}`, manifest });
   }
@@ -759,21 +766,20 @@ export async function api(database, req, res, path) {
     if (!token || !token.trim()) return send(res, 400, { error: 'token required' });
     let me;
     try { me = await github.whoami(token.trim()); } catch (e) { return send(res, 400, { error: e.message }); }
-    db.setSetting(database, 'github_token', token.trim());
-    db.setSetting(database, 'github_login', me.login);
+    db.setUserGithub(database, user.username, { github_token: token.trim(), github_login: me.login });
     return send(res, 200, { connected: true, mode: 'pat', login: me.login, avatar: me.avatar });
   }
   if (path === '/api/github' && req.method === 'DELETE') {
-    for (const k of ['github_token', 'github_login', 'gh_app_id', 'gh_app_slug', 'gh_app_pem', 'gh_app_webhook_secret', 'gh_app_client_id', 'gh_app_client_secret', 'gh_app_installation_id']) db.setSetting(database, k, '');
+    db.clearUserGithub(database, user.username);
     return send(res, 200, { ok: true });
   }
   if (path === '/api/github/repos' && req.method === 'GET') {
-    try { return send(res, 200, { repos: await github.reposFor(database) }); }
+    try { return send(res, 200, { repos: await github.reposFor(database, user.username) }); }
     catch (e) { return send(res, e.message === 'not connected' ? 400 : 502, { error: e.message }); }
   }
   if (path === '/api/github/detect' && req.method === 'GET') {
     const repo = new URL(req.url, 'http://x').searchParams.get('repo');
-    const token = await github.activeToken(database);
+    const token = await github.activeToken(database, user.username);
     if (!token || !repo) return send(res, 400, { error: 'not connected or no repo' });
     try { return send(res, 200, await github.detectType(token, repo)); }
     catch { return send(res, 200, { type: null, reason: 'could not detect' }); }

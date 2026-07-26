@@ -69,6 +69,20 @@ export function open(file = STATE_DB) {
       must_change INTEGER NOT NULL DEFAULT 0,       -- force a password change on next login
       created_at  TEXT NOT NULL
     );
+    -- Per-user GitHub connection (App or PAT). One row per user who connected GitHub.
+    CREATE TABLE IF NOT EXISTS user_github (
+      username               TEXT PRIMARY KEY,
+      gh_app_id              TEXT,
+      gh_app_slug            TEXT,
+      gh_app_pem             TEXT,
+      gh_app_client_id       TEXT,
+      gh_app_client_secret   TEXT,
+      gh_app_webhook_secret  TEXT,
+      gh_app_installation_id TEXT,
+      github_token           TEXT,
+      github_login           TEXT,
+      gh_app_state           TEXT
+    );
   `);
   // Migrations for dbs created before these columns existed (ALTER throws if present).
   for (const alter of [
@@ -106,6 +120,26 @@ export function open(file = STATE_DB) {
   if (admin) {
     for (const t of ['apps', 'resources', 'projects']) {
       db.prepare(`UPDATE ${t} SET owner=? WHERE owner IS NULL OR owner=''`).run(admin);
+    }
+    // Per-user GitHub: move the old single global connection into the admin's row (once), so their
+    // existing App/PAT keeps working and auto-deploys of admin-owned apps don't break.
+    const hasRow = db.prepare('SELECT 1 FROM user_github WHERE username=?').get(admin);
+    const legacyAppId = getSetting(db, 'gh_app_id');
+    const legacyPat = getSetting(db, 'github_token');
+    if (!hasRow && (legacyAppId || legacyPat)) {
+      db.prepare(`INSERT INTO user_github
+        (username, gh_app_id, gh_app_slug, gh_app_pem, gh_app_client_id, gh_app_client_secret, gh_app_webhook_secret, gh_app_installation_id, github_token, github_login)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        admin,
+        legacyAppId || null, getSetting(db, 'gh_app_slug') || null, getSetting(db, 'gh_app_pem') || null,
+        getSetting(db, 'gh_app_client_id') || null, getSetting(db, 'gh_app_client_secret') || null,
+        getSetting(db, 'gh_app_webhook_secret') || null, getSetting(db, 'gh_app_installation_id') || null,
+        legacyPat || null, getSetting(db, 'github_login') || null,
+      );
+      // Retire the globals so there's one source of truth.
+      for (const k of ['gh_app_id', 'gh_app_slug', 'gh_app_pem', 'gh_app_client_id', 'gh_app_client_secret', 'gh_app_webhook_secret', 'gh_app_installation_id', 'github_token', 'github_login', 'gh_app_state']) {
+        db.prepare('DELETE FROM settings WHERE key=?').run(k);
+      }
     }
   }
   return db;
@@ -155,6 +189,28 @@ export const countAppsByOwner = (db, owner) =>
 export const countOwnedByOwner = (db, owner) =>
   db.prepare('SELECT (SELECT COUNT(*) FROM apps WHERE owner=?) + (SELECT COUNT(*) FROM resources WHERE owner=?) AS n')
     .get(owner, owner).n;
+
+// --- per-user GitHub connection --------------------------------------------
+const GH_FIELDS = ['gh_app_id', 'gh_app_slug', 'gh_app_pem', 'gh_app_client_id', 'gh_app_client_secret', 'gh_app_webhook_secret', 'gh_app_installation_id', 'github_token', 'github_login', 'gh_app_state'];
+export const getUserGithub = (db, username) =>
+  (username && db.prepare('SELECT * FROM user_github WHERE username=?').get(username)) || {};
+// Upsert only the provided fields (others untouched).
+export function setUserGithub(db, username, fields) {
+  const keys = Object.keys(fields).filter((k) => GH_FIELDS.includes(k));
+  if (!keys.length) return;
+  db.prepare('INSERT INTO user_github (username) VALUES (?) ON CONFLICT(username) DO NOTHING').run(username);
+  db.prepare(`UPDATE user_github SET ${keys.map((k) => `${k}=?`).join(', ')} WHERE username=?`)
+    .run(...keys.map((k) => fields[k] ?? null), username);
+}
+export const clearUserGithub = (db, username) =>
+  db.prepare('DELETE FROM user_github WHERE username=?').run(username);
+export const findUserByGhState = (db, state) =>
+  state && db.prepare('SELECT username FROM user_github WHERE gh_app_state=?').get(state)?.username;
+export const findUserByGhAppId = (db, appId) =>
+  appId && db.prepare('SELECT username FROM user_github WHERE gh_app_id=?').get(String(appId))?.username;
+// All users' App webhook secrets — the webhook endpoint tries each to find whose push it is.
+export const listGithubWebhookSecrets = (db) =>
+  db.prepare("SELECT username, gh_app_webhook_secret AS secret FROM user_github WHERE gh_app_webhook_secret IS NOT NULL AND gh_app_webhook_secret != ''").all();
 
 export const getSetting = (db, key) =>
   db.prepare('SELECT value FROM settings WHERE key=?').get(key)?.value;

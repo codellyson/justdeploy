@@ -209,7 +209,7 @@ export async function deploy(database, name, opts = {}) {
   writeFileSync(buildLog(name), '');
   let sha = null;
   try {
-    const authEnv = await github.cloneAuthEnv(database, app.repo); // App installation token or PAT
+    const authEnv = await github.cloneAuthEnv(database, app.owner, app.repo); // owner's App token or PAT
     sha = await fetchSha(name, app.repo, opts.sha, authEnv);
 
     if (app.serve === 'container') {

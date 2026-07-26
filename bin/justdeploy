@@ -101,7 +101,7 @@ async function cmdAdd(a) {
     const full = githubFullName(repo);
     if (!full) die('could not infer --type (not a GitHub URL) — pass --type');
     try {
-      const det = await github.detectType(db.getSetting(database, 'github_token') || null, full);
+      const det = await github.detectType(await github.activeToken(database, 'admin'), full);
       type = det.type;
       console.log(`detected ${type} (${det.reason})`);
     } catch (e) { die(`could not detect --type (${e.message}) — pass --type`); }
@@ -129,7 +129,7 @@ async function cmdAdd(a) {
     // The type carries its own release command (Adonis → migrations); --release overrides it.
     release_cmd: a.release ?? row(type).release ?? null, persist: a.persist ?? null,
     // --dir serves a subfolder of the repo for static apps (e.g. docs/); default is the type's artifact.
-    artifact: a.dir ?? null, subdir, created_at: now(),
+    artifact: a.dir ?? null, subdir, owner: 'admin', created_at: now(),
   });
 
   // Type-specific auto-fill so the documented traps never happen.
@@ -321,20 +321,22 @@ function cmdSet(a) {
 
 async function cmdGithub(a) {
   const database = db.open();
+  // The CLI runs as the admin; its GitHub connection is the admin user's.
   if ('clear' in a) {
-    db.setSetting(database, 'github_token', ''); db.setSetting(database, 'github_login', '');
+    db.clearUserGithub(database, 'admin');
     console.log('GitHub disconnected'); return;
   }
   const token = a._[0];
   if (!token) {
-    const connected = db.getSetting(database, 'github_token');
-    console.log(connected ? `connected as ${db.getSetting(database, 'github_login') || '?'}` : 'not connected — run: justdeploy github <token>  (create one at github.com/settings/tokens with repo scope)');
+    const gh = db.getUserGithub(database, 'admin');
+    console.log(gh.github_token || gh.gh_app_id
+      ? `connected as ${gh.github_login || gh.gh_app_slug || '?'}`
+      : 'not connected — run: justdeploy github <token>  (create one at github.com/settings/tokens with repo scope)');
     return;
   }
   try {
     const me = await github.whoami(token);
-    db.setSetting(database, 'github_token', token);
-    db.setSetting(database, 'github_login', me.login);
+    db.setUserGithub(database, 'admin', { github_token: token, github_login: me.login });
     console.log(`connected as ${me.login} — private repos will now clone`);
   } catch (e) { die(e.message); }
 }

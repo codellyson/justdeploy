@@ -124,37 +124,41 @@ export async function installationToken(appId, pem, installationId) {
 }
 
 // --- token resolution (App installation token if connected, else the PAT) -------------------
-let _cache = { token: null, exp: 0 };
-export async function activeToken(database) {
-  const appId = db.getSetting(database, 'gh_app_id');
-  const pem = db.getSetting(database, 'gh_app_pem');
+// Cached installation tokens, keyed by username (each user has their own App/installation).
+const _cache = new Map(); // username -> { token, exp }
+export async function activeToken(database, username) {
+  if (!username) return null;
+  const gh = db.getUserGithub(database, username);
+  const { gh_app_id: appId, gh_app_pem: pem } = gh;
   if (appId && pem) {
-    let instId = db.getSetting(database, 'gh_app_installation_id');
+    let instId = gh.gh_app_installation_id;
     if (!instId) {
       const insts = await appInstallations(appId, pem).catch(() => []);
       instId = insts[0]?.id;
-      if (instId) db.setSetting(database, 'gh_app_installation_id', String(instId));
+      if (instId) db.setUserGithub(database, username, { gh_app_installation_id: String(instId) });
     }
     if (instId) {
-      if (_cache.token && Date.now() < _cache.exp) return _cache.token;
+      const c = _cache.get(username);
+      if (c && Date.now() < c.exp) return c.token;
       const token = await installationToken(appId, pem, instId);
-      _cache = { token, exp: Date.now() + 50 * 60 * 1000 };
+      _cache.set(username, { token, exp: Date.now() + 50 * 60 * 1000 });
       return token;
     }
   }
-  return db.getSetting(database, 'github_token') || null;
+  return gh.github_token || null;
 }
 
-// git clone auth for a repo, resolving the active token (App or PAT).
-export async function cloneAuthEnv(database, repo) {
-  return gitAuthEnv(await activeToken(database), repo);
+// git clone auth for a repo, resolving the owner's active token (App or PAT).
+export async function cloneAuthEnv(database, username, repo) {
+  return gitAuthEnv(await activeToken(database, username), repo);
 }
 
 // List deployable repos for the picker. App installation tokens CANNOT call /user/repos (that's
 // a user endpoint → 403); they must use /installation/repositories. PAT uses /user/repos.
-export async function reposFor(database) {
-  if (db.getSetting(database, 'gh_app_id') && db.getSetting(database, 'gh_app_pem')) {
-    const token = await activeToken(database);
+export async function reposFor(database, username) {
+  const gh = db.getUserGithub(database, username);
+  if (gh.gh_app_id && gh.gh_app_pem) {
+    const token = await activeToken(database, username);
     const out = [];
     for (let page = 1; page <= 6; page++) {
       const r = await fetch(`${API}/installation/repositories?per_page=100&page=${page}`, { headers: headers(token) });
@@ -167,16 +171,16 @@ export async function reposFor(database) {
     }
     return out.sort((a, b) => (String(a.pushed_at) < String(b.pushed_at) ? 1 : -1)); // newest push first
   }
-  const pat = db.getSetting(database, 'github_token');
-  if (!pat) throw new Error('not connected');
-  return listRepos(pat);
+  if (!gh.github_token) throw new Error('not connected');
+  return listRepos(gh.github_token);
 }
 
-// Connection status for the dashboard: app | pat | none.
-export function connection(database) {
-  if (db.getSetting(database, 'gh_app_id')) {
-    return { mode: 'app', slug: db.getSetting(database, 'gh_app_slug') || null, installed: !!db.getSetting(database, 'gh_app_installation_id') };
+// Connection status for the dashboard: app | pat | none — for one user.
+export function connection(database, username) {
+  const gh = db.getUserGithub(database, username);
+  if (gh.gh_app_id) {
+    return { mode: 'app', slug: gh.gh_app_slug || null, installed: !!gh.gh_app_installation_id };
   }
-  if (db.getSetting(database, 'github_token')) return { mode: 'pat', login: db.getSetting(database, 'github_login') || null };
+  if (gh.github_token) return { mode: 'pat', login: gh.github_login || null };
   return { mode: 'none' };
 }
