@@ -61,6 +61,14 @@ export function open(file = STATE_DB) {
       name       TEXT PRIMARY KEY,
       created_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS users (
+      username    TEXT PRIMARY KEY,
+      pass_hash   TEXT NOT NULL,
+      role        TEXT NOT NULL DEFAULT 'member',   -- 'admin' | 'member'
+      app_quota   INTEGER,                          -- null = fall back to the default_app_quota setting
+      must_change INTEGER NOT NULL DEFAULT 0,       -- force a password change on next login
+      created_at  TEXT NOT NULL
+    );
   `);
   // Migrations for dbs created before these columns existed (ALTER throws if present).
   for (const alter of [
@@ -75,20 +83,42 @@ export function open(file = STATE_DB) {
     'ALTER TABLE apps ADD COLUMN project TEXT',
     'ALTER TABLE resources ADD COLUMN project TEXT',
     'ALTER TABLE apps ADD COLUMN subdir TEXT',
+    'ALTER TABLE apps ADD COLUMN owner TEXT',
+    'ALTER TABLE resources ADD COLUMN owner TEXT',
+    'ALTER TABLE projects ADD COLUMN owner TEXT',
   ]) { try { db.exec(alter); } catch { /* column already exists */ } }
   // Every service belongs to a project; ungrouped ones (and older dbs) land in 'default'.
   db.prepare("INSERT INTO projects (name, created_at) VALUES ('default', ?) ON CONFLICT(name) DO NOTHING")
     .run(new Date().toISOString());
   db.exec("UPDATE apps SET project='default' WHERE project IS NULL OR project=''");
   db.exec("UPDATE resources SET project='default' WHERE project IS NULL OR project=''");
+  // Multi-user bootstrap: single-admin dbs kept one `admin_hash` setting. Seed it as the first
+  // admin user (username 'admin', same scrypt salt$hash format) so existing installs keep working.
+  if (db.prepare('SELECT COUNT(*) AS n FROM users').get().n === 0) {
+    const legacy = getSetting(db, 'admin_hash');
+    if (legacy) {
+      db.prepare("INSERT INTO users (username, pass_hash, role, created_at) VALUES ('admin', ?, 'admin', ?)")
+        .run(legacy, new Date().toISOString());
+    }
+  }
+  // Ownerless apps/projects/resources (pre-multi-user) belong to the first admin.
+  const admin = db.prepare("SELECT username FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get()?.username;
+  if (admin) {
+    for (const t of ['apps', 'resources', 'projects']) {
+      db.prepare(`UPDATE ${t} SET owner=? WHERE owner IS NULL OR owner=''`).run(admin);
+    }
+  }
   return db;
 }
 
 // --- projects --------------------------------------------------------------
-export const listProjects = (db) => db.prepare('SELECT * FROM projects ORDER BY created_at').all();
+export const listProjects = (db, owner = null) =>
+  owner
+    ? db.prepare('SELECT * FROM projects WHERE owner=? ORDER BY created_at').all(owner)
+    : db.prepare('SELECT * FROM projects ORDER BY created_at').all();
 export const getProject = (db, name) => db.prepare('SELECT * FROM projects WHERE name=?').get(name);
-export const createProject = (db, name, at) =>
-  db.prepare('INSERT INTO projects (name, created_at) VALUES (?, ?) ON CONFLICT(name) DO NOTHING').run(name, at);
+export const createProject = (db, name, at, owner = null) =>
+  db.prepare('INSERT INTO projects (name, created_at, owner) VALUES (?, ?, ?) ON CONFLICT(name) DO NOTHING').run(name, at, owner);
 export function removeProject(db, name) {
   // Reassign the project's services to 'default', then drop it (never delete apps/dbs here).
   db.prepare("UPDATE apps SET project='default' WHERE project=?").run(name);
@@ -99,6 +129,32 @@ export const setAppProject = (db, name, project) =>
   db.prepare('UPDATE apps SET project=? WHERE name=?').run(project, name);
 export const setResourceProject = (db, name, project) =>
   db.prepare('UPDATE resources SET project=? WHERE name=?').run(project, name);
+export const setResourceOwner = (db, name, owner) =>
+  db.prepare('UPDATE resources SET owner=? WHERE name=?').run(owner, name);
+
+// --- users -----------------------------------------------------------------
+export const getUser = (db, username) =>
+  db.prepare('SELECT * FROM users WHERE username=?').get(username);
+export const listUsers = (db) =>
+  db.prepare('SELECT username, role, app_quota, must_change, created_at FROM users ORDER BY created_at').all();
+export const hasAdminUser = (db) =>
+  db.prepare("SELECT 1 FROM users WHERE role='admin' LIMIT 1").get() != null;
+export const createUser = (db, { username, pass_hash, role = 'member', app_quota = null, must_change = 0, created_at }) =>
+  db.prepare('INSERT INTO users (username, pass_hash, role, app_quota, must_change, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(username, pass_hash, role, app_quota, must_change ? 1 : 0, created_at);
+export const setUserPassword = (db, username, pass_hash, mustChange = 0) =>
+  db.prepare('UPDATE users SET pass_hash=?, must_change=? WHERE username=?').run(pass_hash, mustChange ? 1 : 0, username);
+export const setUserRole = (db, username, role) =>
+  db.prepare('UPDATE users SET role=? WHERE username=?').run(role, username);
+export const setUserQuota = (db, username, quota) =>
+  db.prepare('UPDATE users SET app_quota=? WHERE username=?').run(quota ?? null, username);
+export const deleteUser = (db, username) =>
+  db.prepare('DELETE FROM users WHERE username=?').run(username);
+export const countAppsByOwner = (db, owner) =>
+  db.prepare('SELECT COUNT(*) AS n FROM apps WHERE owner=?').get(owner).n;
+export const countOwnedByOwner = (db, owner) =>
+  db.prepare('SELECT (SELECT COUNT(*) FROM apps WHERE owner=?) + (SELECT COUNT(*) FROM resources WHERE owner=?) AS n')
+    .get(owner, owner).n;
 
 export const getSetting = (db, key) =>
   db.prepare('SELECT value FROM settings WHERE key=?').get(key)?.value;
@@ -107,8 +163,10 @@ export const setSetting = (db, key, value) =>
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ' +
     'ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, String(value));
 
-export const listResources = (db) =>
-  db.prepare('SELECT * FROM resources ORDER BY name').all();
+export const listResources = (db, owner = null) =>
+  owner
+    ? db.prepare('SELECT * FROM resources WHERE owner=? ORDER BY name').all(owner)
+    : db.prepare('SELECT * FROM resources ORDER BY name').all();
 
 export const recentDeploys = (db, app, n = 10) =>
   db.prepare('SELECT * FROM deploys WHERE app=? ORDER BY id DESC LIMIT ?').all(app, n);
@@ -129,13 +187,16 @@ export function rollbackTarget(db, app) {
 export const getApp = (db, name) =>
   db.prepare('SELECT * FROM apps WHERE name = ?').get(name);
 
-export const listApps = (db) =>
-  db.prepare('SELECT * FROM apps ORDER BY name').all();
+// `owner` filters to one user's apps; omit (or pass null) for all — admins pass null.
+export const listApps = (db, owner = null) =>
+  owner
+    ? db.prepare('SELECT * FROM apps WHERE owner=? ORDER BY name').all(owner)
+    : db.prepare('SELECT * FROM apps ORDER BY name').all();
 
 export function upsertApp(db, a) {
   db.prepare(`
-    INSERT INTO apps (name, type, domain, repo, serve, health_path, health_timeout, drain_seconds, release_cmd, persist, artifact, subdir, project, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO apps (name, type, domain, repo, serve, health_path, health_timeout, drain_seconds, release_cmd, persist, artifact, subdir, project, owner, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET
       type=excluded.type, domain=excluded.domain, repo=excluded.repo, serve=excluded.serve,
       health_path=excluded.health_path, health_timeout=excluded.health_timeout,
@@ -144,11 +205,12 @@ export function upsertApp(db, a) {
       persist=coalesce(excluded.persist, apps.persist),
       artifact=coalesce(excluded.artifact, apps.artifact),
       subdir=coalesce(excluded.subdir, apps.subdir),
-      project=coalesce(excluded.project, apps.project)
+      project=coalesce(excluded.project, apps.project),
+      owner=coalesce(excluded.owner, apps.owner)
   `).run(
     a.name, a.type, a.domain ?? null, a.repo ?? null, a.serve,
     a.health_path ?? '/', a.health_timeout ?? 30, a.drain_seconds ?? 10,
-    a.release_cmd ?? null, a.persist ?? null, a.artifact ?? null, a.subdir ?? null, a.project ?? 'default', a.created_at,
+    a.release_cmd ?? null, a.persist ?? null, a.artifact ?? null, a.subdir ?? null, a.project ?? 'default', a.owner ?? null, a.created_at,
   );
 }
 
@@ -215,9 +277,9 @@ export const finishDeploy = (db, id, status, sha, message, at, reason = null, hi
   db.prepare('UPDATE deploys SET status=?, sha=?, message=?, reason=?, hint=?, finished_at=? WHERE id=?')
     .run(status, sha ?? null, message ?? null, reason, hint, at, id);
 
-export const addResource = (db, name, kind, conn, port, at, project = 'default') =>
-  db.prepare('INSERT INTO resources (name, kind, conn, port, project, created_at) VALUES (?, ?, ?, ?, ?, ?) ' +
-    'ON CONFLICT(name) DO UPDATE SET conn=excluded.conn, port=excluded.port').run(name, kind, conn, port ?? null, project, at);
+export const addResource = (db, name, kind, conn, port, at, project = 'default', owner = null) =>
+  db.prepare('INSERT INTO resources (name, kind, conn, port, project, owner, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(name) DO UPDATE SET conn=excluded.conn, port=excluded.port').run(name, kind, conn, port ?? null, project, owner, at);
 
 // Lowest free Postgres host port at/above 5433 (skips ones already in use by a resource).
 export function allocatePgPort(db) {

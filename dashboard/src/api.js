@@ -14,8 +14,15 @@ async function req(path, opts = {}) {
 
 export const api = {
   session: () => req('/session'),
-  login: (password) => req('/login', { method: 'POST', body: { password } }),
+  login: (username, password) => req('/login', { method: 'POST', body: { username, password } }),
+  setup: (username, password) => req('/setup', { method: 'POST', body: { username, password } }),
   logout: () => req('/logout', { method: 'POST' }),
+
+  // User administration (admin only)
+  users: () => req('/users'),
+  createUser: (body) => req('/users', { method: 'POST', body }),
+  updateUser: (username, body) => req(`/users/${username}`, { method: 'PUT', body }),
+  deleteUser: (username) => req(`/users/${username}`, { method: 'DELETE' }),
   state: () => req('/state'),
   graph: (project) => req('/graph' + (project ? `?project=${project}` : '')),
   projects: () => req('/projects'),

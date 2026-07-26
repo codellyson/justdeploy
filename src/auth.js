@@ -42,29 +42,59 @@ function secret(database) {
   return s;
 }
 
-export function issueToken(database, ttlHours = 24 * 7) {
+export function issueToken(database, username, ttlHours = 24 * 7) {
   const exp = Date.now() + ttlHours * 3600 * 1000;
-  const payload = Buffer.from(String(exp)).toString('base64url');
+  const payload = Buffer.from(`${exp}.${username}`).toString('base64url');
   const sig = createHmac('sha256', secret(database)).update(payload).digest('hex');
   return `${payload}.${sig}`;
 }
 
-export function validToken(database, token) {
-  if (!token || !token.includes('.')) return false;
+// Validate a session token and return the live user it belongs to, or null. The signed payload is
+// `<expiryMillis>.<username>`; we re-check the user still exists so deleting a user revokes their
+// tokens for free.
+export function validUser(database, token) {
+  if (!token || !token.includes('.')) return null;
   const [payload, sig] = token.split('.');
   const expected = createHmac('sha256', secret(database)).update(payload).digest('hex');
-  const a = Buffer.from(sig);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
-  const exp = Number(Buffer.from(payload, 'base64url').toString());
-  return Number.isFinite(exp) && Date.now() < exp;
+  const a = Buffer.from(sig), b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+  const decoded = Buffer.from(payload, 'base64url').toString();
+  const dot = decoded.indexOf('.');
+  if (dot < 0) return null;
+  const exp = Number(decoded.slice(0, dot));
+  if (!Number.isFinite(exp) || Date.now() >= exp) return null;
+  const user = db.getUser(database, decoded.slice(dot + 1));
+  return user ? { username: user.username, role: user.role, mustChange: !!user.must_change, appQuota: user.app_quota ?? null } : null;
 }
 
-// --- admin password storage -------------------------------------------------
-export const setAdminPassword = (database, password) =>
-  db.setSetting(database, 'admin_hash', hashPassword(password));
+// --- users ------------------------------------------------------------------
+// Create a user, hashing the plaintext password. `mustChange` forces a password change on login.
+export function createUser(database, { username, password, role = 'member', appQuota = null, mustChange = 0 }) {
+  db.createUser(database, {
+    username, pass_hash: hashPassword(password), role,
+    app_quota: appQuota, must_change: mustChange, created_at: new Date().toISOString(),
+  });
+}
 
-export const hasAdmin = (database) => !!db.getSetting(database, 'admin_hash');
+// Returns the user record on correct credentials, else null.
+export function verifyUser(database, username, password) {
+  const user = db.getUser(database, username);
+  if (!user || !verifyPassword(password, user.pass_hash)) return null;
+  return user;
+}
 
-export const checkAdmin = (database, password) =>
-  verifyPassword(password, db.getSetting(database, 'admin_hash'));
+export function setUserPassword(database, username, password, mustChange = 0) {
+  db.setUserPassword(database, username, hashPassword(password), mustChange);
+}
+
+export const hasAdmin = (database) => db.hasAdminUser(database);
+
+// --- admin password (CLI) ---------------------------------------------------
+// Used by `justdeploy dashboard install/password`. Keeps the legacy `admin_hash` setting (bootstrap
+// seed) and the 'admin' user in sync — creating the admin user on a fresh install.
+export function setAdminPassword(database, password) {
+  const hash = hashPassword(password);
+  db.setSetting(database, 'admin_hash', hash);
+  if (db.getUser(database, 'admin')) db.setUserPassword(database, 'admin', hash, 0);
+  else db.createUser(database, { username: 'admin', pass_hash: hash, role: 'admin', created_at: new Date().toISOString() });
+}

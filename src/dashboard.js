@@ -368,17 +368,35 @@ function clientIp(req) {
   return xff || (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 }
 
-async function api(database, req, res, path) {
-  const authed = () => auth.validToken(database, cookies(req).jd_session);
+export async function api(database, req, res, path) {
+  // The live user this request is authenticated as, or null. Computed once, reused everywhere.
+  const user = auth.validUser(database, cookies(req).jd_session);
 
   // --- public endpoints ---
   if (path === '/api/session' && req.method === 'GET') {
-    return send(res, 200, { authed: authed(), needsSetup: !auth.hasAdmin(database) });
+    return send(res, 200, {
+      authed: !!user,
+      needsSetup: !auth.hasAdmin(database),
+      user: user && { username: user.username, role: user.role, mustChange: user.mustChange },
+    });
   }
   if (path === '/api/login' && req.method === 'POST') {
-    const { password } = await body(req);
-    if (!auth.checkAdmin(database, password || '')) return send(res, 401, { error: 'wrong password' });
-    const token = auth.issueToken(database);
+    const { username, password } = await body(req);
+    const u = auth.verifyUser(database, String(username || ''), String(password || ''));
+    if (!u) return send(res, 401, { error: 'wrong username or password' });
+    const token = auth.issueToken(database, u.username);
+    res.setHeader('Set-Cookie', `jd_session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800`);
+    return send(res, 200, { ok: true, mustChange: !!u.must_change });
+  }
+  // First-run: create the initial admin from the browser when no admin exists yet.
+  if (path === '/api/setup' && req.method === 'POST') {
+    if (auth.hasAdmin(database)) return send(res, 409, { error: 'already set up' });
+    const { username, password } = await body(req);
+    const name = String(username || '').toLowerCase().trim();
+    if (!/^[a-z0-9-]{2,32}$/.test(name)) return send(res, 400, { error: 'username must be 2-32 chars [a-z0-9-]' });
+    if (String(password || '').length < 8) return send(res, 400, { error: 'password must be at least 8 characters' });
+    auth.createUser(database, { username: name, password: String(password), role: 'admin' });
+    const token = auth.issueToken(database, name);
     res.setHeader('Set-Cookie', `jd_session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800`);
     return send(res, 200, { ok: true });
   }
@@ -446,22 +464,47 @@ async function api(database, req, res, path) {
   }
 
   // --- everything below requires auth ---
-  if (!authed()) return send(res, 401, { error: 'unauthorized' });
+  if (!user) return send(res, 401, { error: 'unauthorized' });
+  const isAdmin = user.role === 'admin';
+  // Admin-only gate for global/box-wide actions. Returns true (and sends 403) when it should block.
+  const denyNonAdmin = () => { if (!isAdmin) { send(res, 403, { error: 'admins only' }); return true; } return false; };
+  // Ownership gate for a specific app/project/resource. Returns true (and sends 403/404) when blocked.
+  const denyNotOwner = (entity) => {
+    if (!entity) { send(res, 404, { error: 'not found' }); return true; }
+    if (!isAdmin && entity.owner !== user.username) { send(res, 403, { error: 'forbidden' }); return true; }
+    return false;
+  };
+
+  // Global/box-wide actions are admin-only — one gate instead of a check per route. Members still
+  // reach their own apps/projects/resources and self-service password below. (GitHub is admin-wide
+  // here; Phase C makes it per-user.)
+  const ADMIN_EXACT = new Set([
+    '/api/settings/base-domain', '/api/settings/public-host', '/api/settings/backup',
+    '/api/settings/webhook', '/api/backups', '/api/host', '/api/doctor', '/api/onboarding/dismiss',
+  ]);
+  const ADMIN_PREFIX = ['/api/backup/', '/api/maintenance/', '/api/github', '/api/users'];
+  if (!isAdmin && (ADMIN_EXACT.has(path) || ADMIN_PREFIX.some((p) => path.startsWith(p)))) {
+    return send(res, 403, { error: 'admins only' });
+  }
 
   if (path === '/api/myip' && req.method === 'GET') {
     return send(res, 200, { ip: clientIp(req) });
   }
 
   if (path === '/api/settings/public-host' && req.method === 'PUT') {
+    if (denyNonAdmin()) return;
     const { host } = await body(req);
     db.setSetting(database, 'public_host', (host || '').trim()); // empty → falls back to the domain
     return send(res, 200, { ok: true });
   }
 
+  // Members see only what they own; admins see everything. `scope` is the owner filter (null = all).
+  const scope = isAdmin ? null : user.username;
+
   if (path === '/api/state' && req.method === 'GET') {
     return send(res, 200, {
-      apps: db.listApps(database).map((a) => appView(database, a)),
-      resources: db.listResources(database),
+      apps: db.listApps(database, scope).map((a) => appView(database, a)),
+      resources: db.listResources(database, scope),
       types: TYPES.map((t) => ({ id: t, serve: TABLE[t].serve, release: TABLE[t].release || null })),
       // Suggest `{name}.{base}` domains — override with a `base_domain` setting, else the
       // dashboard's own domain (apps are subdomains of it).
@@ -478,6 +521,7 @@ async function api(database, req, res, path) {
   // Host readiness for the onboarding wizard (Caddy/Docker/Railpack/BuildKit) — same checks as
   // `justdeploy doctor`, read-only.
   if (path === '/api/doctor' && req.method === 'GET') {
+    if (denyNonAdmin()) return;
     return send(res, 200, await setup.inspect());
   }
 
@@ -486,8 +530,8 @@ async function api(database, req, res, path) {
   if (path === '/api/graph' && req.method === 'GET') {
     const project = new URL(req.url, 'http://x').searchParams.get('project');
     const inProj = (p) => !project || (p || 'default') === project;
-    const apps = db.listApps(database).filter((a) => inProj(a.project));
-    const resources = db.listResources(database).filter((r) => inProj(r.project));
+    const apps = db.listApps(database, scope).filter((a) => inProj(a.project));
+    const resources = db.listResources(database, scope).filter((r) => inProj(r.project));
     const ids = new Set([...apps.map((a) => a.name), ...resources.map((r) => r.name)]);
     const REF = /\$\{\{\s*([\w-]+)\.([\w-]+)\s*\}\}/g;
     const edges = [];
@@ -511,9 +555,9 @@ async function api(database, req, res, path) {
 
   // Projects: each with its services + an aggregate status, for the home page.
   if (path === '/api/projects' && req.method === 'GET') {
-    const apps = db.listApps(database);
-    const resources = db.listResources(database);
-    const projects = db.listProjects(database).map((p) => {
+    const apps = db.listApps(database, scope);
+    const resources = db.listResources(database, scope);
+    const projects = db.listProjects(database, scope).map((p) => {
       const pa = apps.filter((a) => (a.project || 'default') === p.name).map((a) => ({ kind: 'app', ...appView(database, a) }));
       const pr = resources.filter((r) => (r.project || 'default') === p.name).map((r) => ({ kind: r.kind, name: r.name }));
       return { name: p.name, created_at: p.created_at, apps: pa, resources: pr };
@@ -524,12 +568,17 @@ async function api(database, req, res, path) {
     const { name } = await body(req);
     const slug = String(name || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     if (!slug) return send(res, 400, { error: 'project name required' });
-    db.createProject(database, slug, now());
+    const existing = db.getProject(database, slug);
+    if (existing && existing.owner && existing.owner !== user.username && !isAdmin) {
+      return send(res, 409, { error: `project “${slug}” already exists` });
+    }
+    db.createProject(database, slug, now(), user.username);
     return send(res, 200, { ok: true, name: slug });
   }
   const pm = path.match(/^\/api\/projects\/([a-z0-9-]+)$/);
   if (pm && req.method === 'DELETE') {
     if (pm[1] === 'default') return send(res, 400, { error: 'the default project cannot be removed' });
+    if (denyNotOwner(db.getProject(database, pm[1]))) return;
     db.removeProject(database, pm[1]); // services fall back to 'default'
     return send(res, 200, { ok: true });
   }
@@ -544,12 +593,74 @@ async function api(database, req, res, path) {
   }
 
   // --- change the admin password (verify current, then set) ---
+  // Change YOUR OWN password (any signed-in user). Clears the must-change flag.
   if (path === '/api/settings/password' && req.method === 'PUT') {
     const { current, next } = await body(req);
     if (!next || String(next).length < 8) return send(res, 400, { error: 'new password must be at least 8 characters' });
-    if (!auth.checkAdmin(database, current || '')) return send(res, 403, { error: 'current password is incorrect' });
-    auth.setAdminPassword(database, String(next));
+    if (!auth.verifyUser(database, user.username, String(current || ''))) {
+      return send(res, 403, { error: 'current password is incorrect' });
+    }
+    auth.setUserPassword(database, user.username, String(next), 0);
     return send(res, 200, { ok: true });
+  }
+
+  // --- user administration (admins only) ---
+  if (path === '/api/users' && req.method === 'GET') {
+    if (denyNonAdmin()) return;
+    const defaultQuota = Number(db.getSetting(database, 'default_app_quota') ?? 3);
+    const users = db.listUsers(database).map((u) => ({
+      username: u.username, role: u.role, mustChange: !!u.must_change, createdAt: u.created_at,
+      quota: u.app_quota ?? defaultQuota, appCount: db.countAppsByOwner(database, u.username),
+    }));
+    return send(res, 200, { users, defaultQuota });
+  }
+  if (path === '/api/users' && req.method === 'POST') {
+    if (denyNonAdmin()) return;
+    const { username, password, role, quota } = await body(req);
+    const name = String(username || '').toLowerCase().trim();
+    if (!/^[a-z0-9-]{2,32}$/.test(name)) return send(res, 400, { error: 'username must be 2-32 chars [a-z0-9-]' });
+    if (String(password || '').length < 8) return send(res, 400, { error: 'password must be at least 8 characters' });
+    if (db.getUser(database, name)) return send(res, 409, { error: `user “${name}” already exists` });
+    auth.createUser(database, {
+      username: name, password: String(password),
+      role: role === 'admin' ? 'admin' : 'member',
+      appQuota: quota == null || quota === '' ? null : Number(quota),
+      mustChange: 1, // they set their own password on first login
+    });
+    return send(res, 200, { ok: true });
+  }
+
+  // /api/users/:username  (PUT: role/quota/reset-password, DELETE)
+  const um = path.match(/^\/api\/users\/([a-z0-9-]+)$/);
+  if (um) {
+    if (denyNonAdmin()) return;
+    const target = um[1];
+    const tu = db.getUser(database, target);
+    if (!tu) return send(res, 404, { error: 'no such user' });
+    if (req.method === 'PUT') {
+      const { role, quota, password } = await body(req);
+      if (role !== undefined) {
+        if (role !== 'admin' && role !== 'member') return send(res, 400, { error: 'role must be admin or member' });
+        // Don't allow removing the last admin.
+        if (tu.role === 'admin' && role === 'member' && db.listUsers(database).filter((u) => u.role === 'admin').length <= 1) {
+          return send(res, 400, { error: 'cannot demote the last admin' });
+        }
+        db.setUserRole(database, target, role);
+      }
+      if (quota !== undefined) db.setUserQuota(database, target, quota === '' || quota == null ? null : Number(quota));
+      if (password !== undefined) {
+        if (String(password).length < 8) return send(res, 400, { error: 'password must be at least 8 characters' });
+        auth.setUserPassword(database, target, String(password), 1);
+      }
+      return send(res, 200, { ok: true });
+    }
+    if (req.method === 'DELETE') {
+      if (target === user.username) return send(res, 400, { error: 'you cannot delete your own account' });
+      const owned = db.countOwnedByOwner(database, target);
+      if (owned > 0) return send(res, 400, { error: `remove ${target}'s ${owned} service(s) first` });
+      db.deleteUser(database, target);
+      return send(res, 200, { ok: true });
+    }
   }
 
   // --- off-box backups: S3/R2 config, run-now, and the systemd schedule ---
@@ -675,16 +786,29 @@ async function api(database, req, res, path) {
     let root;
     try { root = normSubdir(subdir) || null; } catch (e) { return send(res, 400, { error: e.message }); }
     const serve = row(type).serve;
-    const proj = (String(project || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')) || 'default';
-    db.createProject(database, proj, now()); // ensure the project exists
+    // Members default to a project named after themselves (owned by them); admins keep 'default'.
+    const proj = (String(project || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')) || (isAdmin ? 'default' : user.username);
+    // Can't drop a service into someone else's project.
+    const existingProj = db.getProject(database, proj);
+    if (existingProj && existingProj.owner && existingProj.owner !== user.username && !isAdmin) {
+      return send(res, 403, { error: `project “${proj}” belongs to another user` });
+    }
+    db.createProject(database, proj, now(), user.username); // ensure the project exists (no-op if present)
 
-    // Never let a new project silently overwrite an existing app or database.
+    // Never let a new service silently overwrite an existing app or database (names are global).
     if (db.getApp(database, name) || db.getResource(database, name)) {
       return send(res, 409, { error: `“${name}” already exists — pick a different name` });
     }
     // Guard against two apps claiming the same domain (would collide in Caddy).
     if (domain && db.listApps(database).some((a) => a.domain === domain)) {
       return send(res, 409, { error: `domain ${domain} is already used by another app` });
+    }
+    // Per-user app quota (admins are unlimited). Resources don't count against the app quota.
+    if (!isAdmin && serve !== 'resource') {
+      const quota = user.appQuota ?? Number(db.getSetting(database, 'default_app_quota') ?? 3);
+      if (db.countAppsByOwner(database, user.username) >= quota) {
+        return send(res, 403, { error: `app limit reached (${quota}). Ask an admin to raise your quota.` });
+      }
     }
 
     if (serve === 'resource') { // postgres
@@ -693,6 +817,7 @@ async function api(database, req, res, path) {
       // database in 'default' and invisible on its project's canvas.
       const { container, conn } = pg.provision(database, name);
       db.setResourceProject(database, container, proj);
+      db.setResourceOwner(database, container, user.username);
       return send(res, 200, { ok: true, conn });
     }
     if (!domain) return send(res, 400, { error: 'domain required' });
@@ -700,7 +825,7 @@ async function api(database, req, res, path) {
     db.upsertApp(database, {
       name, type, domain, repo, serve,
       // The type carries its own release command (Adonis → migrations); an explicit one overrides.
-      release_cmd: release || row(type).release || null, persist: persist || null, subdir: root, project: proj, created_at: now(),
+      release_cmd: release || row(type).release || null, persist: persist || null, subdir: root, project: proj, owner: user.username, created_at: now(),
     });
     if (type === 'adonis') db.setEnv(database, name, 'APP_KEY', randomBytes(32).toString('base64url'));
 
@@ -712,7 +837,7 @@ async function api(database, req, res, path) {
   const m = path.match(/^\/api\/apps\/([a-z0-9-]+)(\/(deploy|logs|env|refs|config|stream|rollback|deploys))?$/);
   if (m) {
     const name = m[1], sub = m[3];
-    if (!db.getApp(database, name)) return send(res, 404, { error: 'no such app' });
+    if (denyNotOwner(db.getApp(database, name))) return;
 
     if (sub === 'stream' && req.method === 'GET') {
       const kind = new URL(req.url, 'http://x').searchParams.get('kind') || 'build';
@@ -776,10 +901,10 @@ async function api(database, req, res, path) {
     // other app (with its var *names* — never values). Powers the `${{ }}` autocomplete.
     if (sub === 'refs' && req.method === 'GET') {
       const sources = [];
-      for (const r of db.listResources(database)) {
+      for (const r of db.listResources(database, scope)) {
         if (r.kind === 'postgres') sources.push({ name: r.name, kind: 'postgres', fields: PG_REF_FIELDS });
       }
-      for (const a of db.listApps(database)) {
+      for (const a of db.listApps(database, scope)) {
         if (a.name === name) continue;
         const keys = Object.keys(db.getEnv(database, a.name));
         if (keys.length) sources.push({ name: a.name, kind: 'app', fields: keys });
@@ -792,7 +917,7 @@ async function api(database, req, res, path) {
   const rm = path.match(/^\/api\/resources\/([a-z0-9-]+)(?:\/(logs\/stream|restart|reset-password|expose))?$/);
   if (rm) {
     const rname = rm[1], rsub = rm[2];
-    if (!db.getResource(database, rname)) return send(res, 404, { error: 'no such resource' });
+    if (denyNotOwner(db.getResource(database, rname))) return;
     if (rsub === 'logs/stream' && req.method === 'GET') return streamDockerLogs(req, res, rname);
     if (!rsub && req.method === 'GET') return send(res, 200, pg.info(database, rname));
     if (!rsub && req.method === 'DELETE') { pg.deprovision(database, rname, {}); return send(res, 200, { ok: true }); }

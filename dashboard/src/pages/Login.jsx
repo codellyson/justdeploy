@@ -3,6 +3,7 @@ import { api } from '../api';
 import { Icon } from '../components/icons';
 
 export function Login({ needsSetup, onAuthed }) {
+  const [username, setUsername] = useState('');
   const [pw, setPw] = useState('');
   const [show, setShow] = useState(false);
   const [err, setErr] = useState('');
@@ -10,8 +11,11 @@ export function Login({ needsSetup, onAuthed }) {
 
   const submit = async () => {
     setErr(''); setBusy(true);
-    try { await api.login(pw); onAuthed(); }
-    catch (e) { setErr(e.message); setBusy(false); }
+    try {
+      if (needsSetup) await api.setup(username.trim(), pw);
+      else await api.login(username.trim(), pw);
+      onAuthed();
+    } catch (e) { setErr(e.message); setBusy(false); }
   };
 
   return (
@@ -30,16 +34,25 @@ export function Login({ needsSetup, onAuthed }) {
         </div>
 
         <div className="surface p-7">
-          {needsSetup ? (
-            <p className="text-sm leading-relaxed text-secondary">
-              No admin password set yet. Run{' '}
-              <span className="font-mono text-primary">justdeploy dashboard install</span>{' '}
-              on the server to set one.
-            </p>
-          ) : (
+          {(
             <>
-              <h1 className="text-center text-lg font-semibold tracking-tight">Welcome back</h1>
-              <p className="mb-6 mt-1 text-center text-sm text-muted">Enter your password to open the control panel.</p>
+              <h1 className="text-center text-lg font-semibold tracking-tight">{needsSetup ? 'Create the admin account' : 'Welcome back'}</h1>
+              <p className="mb-6 mt-1 text-center text-sm text-muted">
+                {needsSetup ? 'Pick a username and password for the first admin.' : 'Sign in to open the control panel.'}
+              </p>
+
+              <label className="mb-1.5 block text-xs font-medium text-secondary">Username</label>
+              <div className="relative mb-4">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"><Icon.Server className="h-4 w-4" /></span>
+                <input
+                  value={username}
+                  autoFocus
+                  onChange={(e) => setUsername(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && submit()}
+                  placeholder="you"
+                  className="field pl-10"
+                />
+              </div>
 
               <label className="mb-1.5 block text-xs font-medium text-secondary">Password</label>
               <div className="relative mb-4">
@@ -47,7 +60,6 @@ export function Login({ needsSetup, onAuthed }) {
                 <input
                   type={show ? 'text' : 'password'}
                   value={pw}
-                  autoFocus
                   onChange={(e) => setPw(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && submit()}
                   placeholder="••••••••••••"
@@ -66,7 +78,7 @@ export function Login({ needsSetup, onAuthed }) {
                 className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent py-2.5 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06] disabled:opacity-70"
               >
                 {busy && <span className="spin h-4 w-4 rounded-full border-2 border-[rgb(var(--accent-text))]/40 border-t-[rgb(var(--accent-text))]" />}
-                {busy ? 'Signing in…' : 'Sign in'}
+                {busy ? (needsSetup ? 'Creating…' : 'Signing in…') : (needsSetup ? 'Create admin' : 'Sign in')}
               </button>
             </>
           )}

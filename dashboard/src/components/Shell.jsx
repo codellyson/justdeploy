@@ -65,9 +65,10 @@ function Brand() {
   );
 }
 
-export function Shell({ onSignedOut }) {
+export function Shell({ user, onSignedOut }) {
   const navigate = useNavigate();
   const [newProj, setNewProj] = useState(false);
+  const initial = (user?.username || 'A').charAt(0).toUpperCase();
 
   const signOut = async () => {
     await api.logout().catch(() => {});
@@ -116,12 +117,12 @@ export function Shell({ onSignedOut }) {
             </button>
             <button
               onClick={signOut}
-              title="Sign out"
+              title={user?.username ? `Signed in as ${user.username}${user.role === 'admin' ? ' (admin)' : ''} — sign out` : 'Sign out'}
               className="group relative grid h-9 w-9 place-items-center rounded-full text-[rgb(var(--accent-text))] transition hover:brightness-105"
               style={{ background: 'linear-gradient(135deg, rgb(var(--accent)), rgb(var(--accent-hover)))' }}
             >
               <Icon.LogOut className="h-[0.9rem] w-[0.9rem] opacity-0 transition group-hover:opacity-100" />
-              <span className="absolute text-xs font-semibold transition group-hover:opacity-0">A</span>
+              <span className="absolute text-xs font-semibold transition group-hover:opacity-0">{initial}</span>
             </button>
           </div>
         </div>

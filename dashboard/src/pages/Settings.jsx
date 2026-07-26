@@ -49,14 +49,15 @@ function SaveBtn({ busy, onClick, children = 'Save' }) {
 
 export function Settings() {
   const [d, setD] = useState(null);
-  const load = () => Promise.all([api.state(), api.backupSettings(), api.webhookInfo(), api.backups(), api.host(), api.githubStatus()])
-    .then(([st, bk, wh, bl, host, gh]) => setD({ st, bk, wh, backups: bl.backups, host, gh }));
+  const load = () => Promise.all([api.session(), api.state(), api.backupSettings(), api.webhookInfo(), api.backups(), api.host(), api.githubStatus()])
+    .then(([ses, st, bk, wh, bl, host, gh]) => setD({ me: ses.user, st, bk, wh, backups: bl.backups, host, gh }));
   useEffect(() => { load().catch(() => {}); }, []);
   if (!d) return <Spinner className="mx-auto my-16 h-6 w-6" />;
   return <SettingsBody {...d} reload={load} />;
 }
 
-function SettingsBody({ st, bk, wh, backups, host, gh, reload }) {
+function SettingsBody({ me, st, bk, wh, backups, host, gh, reload }) {
+  const isAdmin = me?.role === 'admin';
   const [busy, setBusy] = useState('');
   const run = async (key, fn, ok) => {
     setBusy(key);
@@ -124,7 +125,7 @@ function SettingsBody({ st, bk, wh, backups, host, gh, reload }) {
       </Card>
 
       {/* Security */}
-      <Card icon={Icon.Lock} title="Password" subtitle="The admin password for this dashboard.">
+      <Card icon={Icon.Lock} title="Password" subtitle={`Your password${me?.username ? ` — signed in as ${me.username}${isAdmin ? ' (admin)' : ''}` : ''}.`}>
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="flex flex-col gap-1.5"><Label>Current</Label><input type="password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} autoComplete="current-password" className="field py-1.5 text-sm" /></div>
           <div className="flex flex-col gap-1.5"><Label>New</Label><input type="password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} autoComplete="new-password" className="field py-1.5 text-sm" /></div>
@@ -132,6 +133,9 @@ function SettingsBody({ st, bk, wh, backups, host, gh, reload }) {
         </div>
         <div className="mt-4 flex justify-end"><SaveBtn busy={busy === 'pw'} onClick={savePassword}>Change password</SaveBtn></div>
       </Card>
+
+      {/* Users (admin only) */}
+      {isAdmin && <UsersCard />}
 
       {/* GitHub */}
       <Card icon={Icon.Github} title="GitHub" subtitle="Deploy private repos and auto-detect frameworks — install once, all repos.">
@@ -278,5 +282,62 @@ function SettingsBody({ st, bk, wh, backups, host, gh, reload }) {
         </div>
       </Card>
     </div>
+  );
+}
+
+// Admin-only account management: add members, set role/quota, reset passwords, remove.
+function UsersCard() {
+  const [data, setData] = useState(null);
+  const [form, setForm] = useState({ username: '', password: '', role: 'member', quota: '' });
+  const [busy, setBusy] = useState('');
+  const load = () => api.users().then(setData).catch((e) => toast(e.message, 'error'));
+  useEffect(() => { load(); }, []);
+
+  const run = async (key, fn, ok) => {
+    setBusy(key);
+    try { await fn(); if (ok) toast(ok, 'success'); await load(); }
+    catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
+  };
+  const add = () => {
+    if (!/^[a-z0-9-]{2,32}$/.test(form.username.trim())) return toast('username must be 2-32 chars [a-z0-9-]', 'error');
+    if (form.password.length < 8) return toast('password must be at least 8 characters', 'error');
+    run('add', () => api.createUser({ ...form, username: form.username.trim().toLowerCase() }), `added ${form.username}`)
+      .then(() => setForm({ username: '', password: '', role: 'member', quota: '' }));
+  };
+  const resetPw = (u) => {
+    const p = window.prompt(`New temporary password for ${u} (they'll set their own on next login):`);
+    if (p == null) return;
+    if (p.length < 8) return toast('password must be at least 8 characters', 'error');
+    run('rp' + u, () => api.updateUser(u, { password: p }), `reset ${u}'s password`);
+  };
+  const del = (u) => { if (window.confirm(`Delete user ${u}? This cannot be undone.`)) run('del' + u, () => api.deleteUser(u), `deleted ${u}`); };
+
+  return (
+    <Card icon={Icon.Server} title="Users" subtitle="Give friends & family their own accounts — each sees only their own apps.">
+      <div className="flex flex-col gap-4">
+        {/* add-user row */}
+        <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto_auto_auto]">
+          <input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="username" className="field py-1.5 text-sm" />
+          <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="temp password" className="field py-1.5 text-sm" />
+          <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="field py-1.5 text-sm"><option value="member">member</option><option value="admin">admin</option></select>
+          <input value={form.quota} onChange={(e) => setForm({ ...form, quota: e.target.value })} placeholder={`quota (${data?.defaultQuota ?? ''})`} className="field w-24 py-1.5 text-sm" />
+          <SaveBtn busy={busy === 'add'} onClick={add}>Add user</SaveBtn>
+        </div>
+
+        {/* user list */}
+        <div className="overflow-hidden rounded-xl border border-border">
+          {(data?.users || []).map((u) => (
+            <div key={u.username} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border px-3.5 py-2.5 last:border-b-0">
+              <span className="font-mono text-sm">{u.username}</span>
+              <span className={cx('rounded-full px-2 py-0.5 text-[0.68rem] font-semibold uppercase', u.role === 'admin' ? 'bg-accent/[0.15] text-accent' : 'bg-bg-secondary text-muted')}>{u.role}</span>
+              {u.mustChange && <span className="text-[0.68rem] text-warning">must change pw</span>}
+              <span className="ml-auto text-xs text-muted">{u.appCount} app{u.appCount === 1 ? '' : 's'}{u.role !== 'admin' ? ` / ${u.quota} quota` : ''}</span>
+              <button onClick={() => resetPw(u.username)} className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted transition hover:text-primary">Reset pw</button>
+              <button onClick={() => del(u.username)} className="rounded-lg border border-border px-2.5 py-1 text-xs font-medium text-muted transition hover:text-danger">Delete</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Card>
   );
 }

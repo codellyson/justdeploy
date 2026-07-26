@@ -11,6 +11,7 @@ import { ServiceDetail, LegacyServiceRedirect } from './pages/ServiceDetail';
 import { ToastHost } from './components/toast';
 import { Spinner } from './components/ui';
 import { RouteAnalytics } from './lib/analytics';
+import { ForceChangePassword } from './pages/ForceChangePassword';
 
 export default function App() {
   const [session, setSession] = useState(null); // { authed, needsSetup } | null while loading
@@ -28,11 +29,13 @@ export default function App() {
         <div className="grid min-h-dvh place-items-center"><Spinner className="h-6 w-6" /></div>
       ) : !session.authed ? (
         <Login needsSetup={session.needsSetup} onAuthed={check} />
+      ) : session.user?.mustChange ? (
+        <ForceChangePassword onDone={check} />
       ) : (
         <BrowserRouter>
           <RouteAnalytics />
           <Routes>
-            <Route element={<Shell onSignedOut={() => setSession({ authed: false })} />}>
+            <Route element={<Shell user={session.user} onSignedOut={() => setSession({ authed: false })} />}>
               <Route path="/" element={<Overview />} />
               <Route path="/new" element={<NewProject />} />
               <Route path="/settings" element={<Settings />} />
