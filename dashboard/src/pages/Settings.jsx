@@ -104,8 +104,8 @@ function SettingsBody({ me, st, bk, wh, backups, host, gh, reload }) {
         <p className="mt-0.5 text-sm text-muted">Configure your instance — everything the CLI does, from the browser.</p>
       </div>
 
-      {/* General */}
-      <Card icon={Icon.Globe} title="General" subtitle="Where your apps live.">
+      {/* General (admin only) */}
+      {isAdmin && <Card icon={Icon.Globe} title="General" subtitle="Where your apps live.">
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label>Base domain <span className="font-normal normal-case tracking-normal text-muted/70">— new apps become {'<name>'}.{domain || 'yourdomain.com'}</span></Label>
@@ -122,7 +122,7 @@ function SettingsBody({ me, st, bk, wh, backups, host, gh, reload }) {
             </div>
           </div>
         </div>
-      </Card>
+      </Card>}
 
       {/* Security */}
       <Card icon={Icon.Lock} title="Password" subtitle={`Your password${me?.username ? ` — signed in as ${me.username}${isAdmin ? ' (admin)' : ''}` : ''}.`}>
@@ -138,7 +138,7 @@ function SettingsBody({ me, st, bk, wh, backups, host, gh, reload }) {
       {isAdmin && <UsersCard />}
 
       {/* GitHub */}
-      <Card icon={Icon.Github} title="GitHub" subtitle="Deploy private repos and auto-detect frameworks — install once, all repos.">
+      <Card icon={Icon.Github} title="GitHub" subtitle="Connect your own GitHub to deploy your private repos — auto-detects frameworks, push auto-deploys.">
         {gh.mode === 'app' ? (
           <div className="flex flex-col gap-2.5">
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-bg px-4 py-3">
@@ -177,8 +177,8 @@ function SettingsBody({ me, st, bk, wh, backups, host, gh, reload }) {
         )}
       </Card>
 
-      {/* Auto-deploy (webhook) */}
-      <Card icon={Icon.GitBranch} title="Git-push auto-deploy" subtitle="Push to a repo's default branch → the matching app redeploys.">
+      {/* Auto-deploy (webhook, admin only) */}
+      {isAdmin && <Card icon={Icon.GitBranch} title="Git-push auto-deploy" subtitle="Push to a repo's default branch → the matching app redeploys.">
         {wh.enabled ? (
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-1.5"><Label>Payload URL</Label><CopyField value={wh.url} /></div>
@@ -198,10 +198,10 @@ function SettingsBody({ me, st, bk, wh, backups, host, gh, reload }) {
             <SaveBtn busy={busy === 'whon'} onClick={() => run('whon', () => api.enableWebhook(), 'auto-deploy enabled')}>Enable</SaveBtn>
           </div>
         )}
-      </Card>
+      </Card>}
 
-      {/* Backups */}
-      <Card icon={Icon.Database} title="Backups" subtitle="Snapshot state.db + app data + Postgres to your own S3 / R2 bucket.">
+      {/* Backups (admin only) */}
+      {isAdmin && <Card icon={Icon.Database} title="Backups" subtitle="Snapshot state.db + app data + Postgres to your own S3 / R2 bucket.">
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-bg px-3.5 py-2.5 text-xs text-muted">
             <span>Get an endpoint + keys from your provider:</span>
@@ -258,10 +258,10 @@ function SettingsBody({ me, st, bk, wh, backups, host, gh, reload }) {
             </div>
           )}
         </div>
-      </Card>
+      </Card>}
 
-      {/* Host & maintenance */}
-      <Card icon={Icon.Server} title="Host &amp; maintenance" subtitle="Server status and one-click upkeep.">
+      {/* Host & maintenance (admin only) */}
+      {isAdmin && <Card icon={Icon.Server} title="Host &amp; maintenance" subtitle="Server status and one-click upkeep.">
         <div className="flex flex-col gap-4">
           <div className="grid gap-1.5 rounded-xl border border-border bg-bg p-3.5 sm:grid-cols-2">
             <HostRow ok={host.caddyAdmin} label="Caddy" detail={host.versions?.caddy?.split(' ')[0]} />
@@ -280,7 +280,7 @@ function SettingsBody({ me, st, bk, wh, backups, host, gh, reload }) {
             <button onClick={() => run('gc', async () => { const r = await api.gc(); toast(r.apps.length ? `reclaimed — trimmed images for ${r.apps.length} app(s)` : 'nothing to reclaim', 'success'); })} disabled={busy === 'gc'} className="rounded-xl border border-border bg-bg-secondary px-3.5 py-2 text-sm font-semibold transition hover:border-muted/50 disabled:opacity-60">{busy === 'gc' ? 'Reclaiming…' : 'Reclaim disk'}</button>
           </div>
         </div>
-      </Card>
+      </Card>}
     </div>
   );
 }

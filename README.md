@@ -188,6 +188,25 @@ Two optional per-app knobs, set at `add`, via `justdeploy set`, or in the dashbo
 | `nextjs` | proxy       | `HOSTNAME=0.0.0.0`, `PORT`; runs `next start` as-is (no next.config change), or standalone if set |
 | `postgres` | resource  | `docker run` + scoped non-superuser role, TLS, localhost port |
 
+## Users (friends & family)
+
+The dashboard is multi-user. The first account is the **admin** (created on the setup screen, or
+via `justdeploy dashboard install`). From **Settings → Users**, the admin adds members with a
+temporary password; each member:
+
+- signs in with their own username and sets their own password on first login,
+- sees and manages **only their own** projects, apps, and databases,
+- connects **their own GitHub** (Settings → GitHub) to deploy their own private repos,
+- is capped by a per-user **app quota** (admin-configurable; default 3).
+
+The admin sees everything and owns all global settings (base domain, backups, webhook, host
+maintenance). The **CLI stays admin-only** — members use the web dashboard.
+
+> **Not a security sandbox.** Isolation is at the dashboard level (who can see/manage what). Members'
+> apps still run as containers on a shared Docker daemon, so this is for **people you trust**, not
+> hostile tenants. And everything shares one box's CPU/RAM/disk — **size the server up** (and set
+> quotas) before inviting people; a tiny box fills quickly (each container image is ~1 GB).
+
 ## Config & source of truth
 
 The **source of truth is the SQLite state db** (`/var/lib/justdeploy/state.db`), written by the
