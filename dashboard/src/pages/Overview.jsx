@@ -46,7 +46,8 @@ function ProjectCard({ p }) {
 }
 
 export function Overview() {
-  const { openNew, newProject } = useOutletContext();
+  const { user, openNew, newProject } = useOutletContext();
+  const isAdmin = user?.role === 'admin';
   const v = useVersion();
   const [state, setState] = useState(null);
   const [projects, setProjects] = useState(null);
@@ -90,7 +91,7 @@ export function Overview() {
         </span>
       </div>
 
-      {!state.onboardingDismissed && !(state.baseDomainSet && state.github && apps.length > 0) && (
+      {isAdmin && !state.onboardingDismissed && !(state.baseDomainSet && state.github && apps.length > 0) && (
         <Onboarding state={state} onChange={reload} onDeploy={openNew} />
       )}
 

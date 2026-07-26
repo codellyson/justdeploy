@@ -129,7 +129,7 @@ export function Shell({ user, onSignedOut }) {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
-        <Outlet context={{ openNew: () => navigate('/new'), newProject: () => setNewProj(true) }} />
+        <Outlet context={{ user, openNew: () => navigate('/new'), newProject: () => setNewProj(true) }} />
       </main>
 
       {newProj && <NewProjectModal onClose={() => setNewProj(false)} />}
