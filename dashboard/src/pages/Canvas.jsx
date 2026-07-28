@@ -5,7 +5,17 @@ import { TypeIcon, Icon } from '../components/icons';
 import { StatusDot, Spinner } from '../components/ui';
 import { appHealth, typeLabel, cx } from '../lib/format';
 
-const NW = 176, NH = 66; // node card size
+const NW = 220, NH = 92; // node card size
+
+// Railway-style status line for a service node.
+function svcStatus(n) {
+  if (n.kind !== 'app') return { text: 'Database', tone: 'text-muted', dot: 'bg-accent' };
+  if (n.deploying) return { text: 'Deploying…', tone: 'text-secondary', dot: 'bg-warning' };
+  const h = appHealth(n);
+  if (h === 'ok' || h === 'running') return { text: 'Service is online', tone: 'text-secondary', dot: 'bg-success' };
+  if (h === 'failed') return { text: 'Service is offline', tone: 'text-muted', dot: 'bg-danger' };
+  return { text: 'Not deployed', tone: 'text-muted', dot: 'bg-muted' };
+}
 
 // Lightweight force-directed layout — repulsion between all nodes, springs along edges, gentle
 // gravity to center. Runs once; nodes are draggable afterward.
@@ -47,8 +57,11 @@ export function Canvas() {
   const [g, setG] = useState(null);
   const [pos, setPos] = useState({});
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [scale, setScale] = useState(1);
   const [hover, setHover] = useState(null);
   const drag = useRef(null);
+  const zoom = (f) => setScale((s) => Math.min(1.6, Math.max(0.4, s * f)));
+  const resetView = () => { setScale(1); setPan({ x: 0, y: 0 }); };
 
   useEffect(() => {
     let live = true;
@@ -73,7 +86,8 @@ export function Canvas() {
     const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
     if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
     if (d.pan) setPan({ x: d.ox + dx, y: d.oy + dy });
-    else setPos((p) => ({ ...p, [d.name]: { x: d.ox + dx, y: d.oy + dy } }));
+    // Node coords live in unscaled canvas space, so convert the screen delta by the zoom.
+    else setPos((p) => ({ ...p, [d.name]: { x: d.ox + dx / scale, y: d.oy + dy / scale } }));
   };
   const onUp = (name) => {
     const d = drag.current; drag.current = null;
@@ -99,8 +113,7 @@ export function Canvas() {
           <p className="mt-0.5 text-sm text-muted">{project ? 'This project’s services' : 'Your apps and databases'}, wired by their <code className="rounded bg-bg-secondary px-1 font-mono text-[0.75rem] text-accent">{'${{ }}'}</code> references. Drag to arrange · click to open.</p>
         </div>
         <div className="flex items-center gap-2">
-          {project && <button onClick={() => navigate(`/new?project=${project}`)} className="flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"><Icon.Plus className="h-4 w-4" /> New service</button>}
-          <button onClick={() => setPos(layout(g.nodes, g.edges, 960, 560))} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-sm font-medium transition hover:border-muted/50"><Icon.Layers className="h-4 w-4" /> Re-arrange</button>
+          {project && <button onClick={() => navigate(`/new?project=${project}`)} className="flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"><Icon.Plus className="h-4 w-4" /> Add service</button>}
         </div>
       </div>
 
@@ -115,10 +128,10 @@ export function Canvas() {
       ) : (
         <div
           onMouseDown={onPanDown} onMouseMove={onMove} onMouseUp={() => onUp(null)} onMouseLeave={() => (drag.current = null)}
-          className="relative h-[70vh] min-h-[460px] cursor-grab overflow-hidden rounded-2xl border border-border bg-bg active:cursor-grabbing"
-          style={{ backgroundImage: 'radial-gradient(rgb(var(--border)) 1px, transparent 1px)', backgroundSize: '22px 22px', backgroundPosition: `${pan.x}px ${pan.y}px` }}
+          className="relative h-[72vh] min-h-[460px] cursor-grab overflow-hidden rounded-2xl border border-border bg-bg active:cursor-grabbing"
+          style={{ backgroundImage: 'radial-gradient(rgb(var(--border)) 1px, transparent 1px)', backgroundSize: `${22 * scale}px ${22 * scale}px`, backgroundPosition: `${pan.x}px ${pan.y}px` }}
         >
-          <div className="absolute inset-0" style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}>
+          <div className="absolute inset-0" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, transformOrigin: '0 0' }}>
             <svg className="pointer-events-none absolute overflow-visible" style={{ left: 0, top: 0 }}>
               <defs>
                 <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="rgb(var(--accent))" /></marker>
@@ -136,23 +149,37 @@ export function Canvas() {
               return (
                 <div key={n.name} onMouseDown={(e) => onDown(e, n.name)} onMouseUp={(e) => { e.stopPropagation(); onUp(n.name); }}
                   onMouseEnter={() => setHover(n.name)} onMouseLeave={() => setHover(null)}
-                  className={cx('group absolute flex cursor-pointer select-none items-center gap-2.5 rounded-xl border bg-bg-secondary px-3 py-2.5 shadow-lg transition-opacity',
-                    n.kind === 'postgres' ? 'border-accent/30' : 'border-border', dim ? 'opacity-40' : 'opacity-100')}
-                  style={{ left: q.x, top: q.y, width: NW }}
+                  className={cx('group absolute flex cursor-pointer select-none flex-col justify-between rounded-2xl border bg-bg-secondary p-3.5 shadow-lg transition',
+                    hover === n.name ? 'border-accent/60' : n.kind === 'postgres' ? 'border-accent/25' : 'border-border', dim ? 'opacity-40' : 'opacity-100')}
+                  style={{ left: q.x, top: q.y, width: NW, height: NH }}
                 >
-                  <span className={cx('grid h-8 w-8 shrink-0 place-items-center rounded-lg', n.kind === 'postgres' ? 'bg-accent/[0.12] text-accent' : 'bg-bg')}>
-                    {n.kind === 'postgres' ? <Icon.Database className="h-4 w-4" /> : <TypeIcon type={n.type} className="h-4 w-4" />}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold">{n.name}</div>
-                    <div className="truncate font-mono text-[0.68rem] text-muted">{n.kind === 'postgres' ? 'postgres' : typeLabel(n.type)}</div>
+                  <div className="flex items-center gap-2.5">
+                    <span className={cx('grid h-8 w-8 shrink-0 place-items-center rounded-lg', n.kind === 'postgres' ? 'bg-accent/[0.12] text-accent' : 'bg-bg')}>
+                      {n.kind === 'postgres' ? <Icon.Database className="h-4 w-4" /> : <TypeIcon type={n.type} className="h-4 w-4" />}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold">{n.name}</div>
+                      <div className="truncate font-mono text-[0.62rem] text-muted">{n.kind === 'postgres' ? 'postgres' : typeLabel(n.type)}</div>
+                    </div>
                   </div>
-                  {n.kind === 'app' && <StatusDot status={appHealth(n)} ring size="h-2 w-2" />}
+                  {(() => { const st = svcStatus(n); return (
+                    <div className="flex items-center gap-1.5">
+                      <span className={cx('h-1.5 w-1.5 rounded-full', st.dot)} />
+                      <span className={cx('text-xs', st.tone)}>{st.text}</span>
+                    </div>
+                  ); })()}
                 </div>
               );
             })}
           </div>
-          <div className="pointer-events-none absolute bottom-3 left-4 font-mono text-[0.7rem] text-muted">{g.nodes.length} nodes · {g.edges.length} links</div>
+          {/* floating zoom controls (Railway-style) */}
+          <div className="absolute bottom-4 left-4 flex flex-col overflow-hidden rounded-xl border border-border bg-bg-secondary/90 shadow-lg backdrop-blur" onMouseDown={(e) => e.stopPropagation()}>
+            <button onClick={() => zoom(1.2)} title="Zoom in" className="grid h-9 w-9 place-items-center text-muted transition hover:bg-bg hover:text-primary"><Icon.Plus className="h-4 w-4" /></button>
+            <button onClick={() => zoom(1 / 1.2)} title="Zoom out" className="grid h-9 w-9 place-items-center border-t border-border text-lg leading-none text-muted transition hover:bg-bg hover:text-primary">–</button>
+            <button onClick={resetView} title="Reset view" className="grid h-9 w-9 place-items-center border-t border-border text-muted transition hover:bg-bg hover:text-primary"><Icon.Canvas className="h-4 w-4" /></button>
+            <button onClick={() => setPos(layout(g.nodes, g.edges, 960, 560))} title="Auto-arrange" className="grid h-9 w-9 place-items-center border-t border-border text-muted transition hover:bg-bg hover:text-primary"><Icon.Layers className="h-4 w-4" /></button>
+          </div>
+          <div className="pointer-events-none absolute bottom-4 right-4 font-mono text-[0.7rem] text-muted">{g.nodes.length} nodes · {g.edges.length} links · {Math.round(scale * 100)}%</div>
         </div>
       )}
     </div>
