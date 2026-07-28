@@ -21,8 +21,12 @@ function duration(d) {
   return s < 60 ? `${Math.round(s)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 }
 
-export function AppDetail() {
-  const { project, name } = useParams();
+// Renders as a full page (reads the route params) or inside the canvas drawer (name/project passed
+// as props + an onClose handler).
+export function AppDetail({ name: nameProp, project: projProp, onClose } = {}) {
+  const params = useParams();
+  const name = nameProp ?? params.name;
+  const project = projProp ?? params.project;
   const back = project ? `/projects/${project}` : '/'; // return to this app's project canvas
   const navigate = useNavigate();
   const v = useVersion();
@@ -54,11 +58,11 @@ export function AppDetail() {
   const deploy = () => act('deploy', () => api.deploy(name), 'Logs').then(() => toast(`deploying ${name}`));
   const rollback = () => { if (confirm(`Roll back to ${shortSha(app.rollbackTo)}?`)) act('rollback', () => api.rollback(name), 'Logs'); };
   const rollbackSha = (sha) => { if (confirm(`Roll back to ${shortSha(sha)}?`)) act('rollback', () => api.rollback(name, sha), 'Logs'); };
-  const remove = () => { if (confirm(`Delete ${name}? Removes files and stops it.`)) act('delete', async () => { await api.remove(name); navigate(back); toast(`${name} removed`); }); };
+  const remove = () => { if (confirm(`Delete ${name}? Removes files and stops it.`)) act('delete', async () => { await api.remove(name); onClose ? onClose() : navigate(back); toast(`${name} removed`); }); };
 
   return (
     <div className="animate-rise flex flex-col gap-5">
-      <Link to={back} className="flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> {project || 'Overview'}</Link>
+      {!onClose && <Link to={back} className="flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> {project || 'Overview'}</Link>}
 
       {/* header */}
       <div className="flex flex-wrap items-start gap-4">

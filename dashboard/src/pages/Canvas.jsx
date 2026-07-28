@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import ReactFlow, { Background, Controls, MiniMap, useNodesState, useEdgesState, MarkerType, Handle, Position } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -6,6 +6,8 @@ import { api } from '../api';
 import { TypeIcon, Icon } from '../components/icons';
 import { Spinner } from '../components/ui';
 import { appHealth, typeLabel, cx } from '../lib/format';
+import { AppDetail } from './AppDetail';
+import { DatabaseDetail } from './DatabaseDetail';
 
 // Railway-style status line for a service node.
 function svcStatus(n) {
@@ -62,6 +64,7 @@ export function Canvas() {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const ready = useRef(false);
   const posRef = useRef({}); // remember positions across polls / drags
+  const [sel, setSel] = useState(null); // { name, kind, project } — open in the side drawer
 
   useEffect(() => {
     let live = true;
@@ -97,11 +100,18 @@ export function Canvas() {
   // Persist positions as the user drags so a poll refresh doesn't reset them.
   const onNodeDragStop = useCallback((_e, node) => { posRef.current[node.id] = node.position; }, []);
 
+  // Esc closes the service drawer.
+  useEffect(() => {
+    if (!sel) return;
+    const onKey = (e) => e.key === 'Escape' && setSel(null);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sel]);
+
   const onNodeClick = useCallback((_e, node) => {
     const n = node.data.node;
-    const proj = project || n.project || 'default';
-    navigate(`/projects/${proj}/${n.name}`, { state: { kind: n.kind === 'postgres' ? 'db' : 'app' } });
-  }, [navigate, project]);
+    setSel({ name: n.name, kind: n.kind === 'postgres' ? 'db' : 'app', project: project || n.project || 'default' });
+  }, [project]);
 
   const empty = ready.current && nodes.length === 0;
   const bg = useMemo(() => 'rgb(var(--border))', []);
@@ -152,6 +162,23 @@ export function Canvas() {
           <Controls showInteractive={false} />
           <MiniMap pannable zoomable nodeColor="rgb(var(--accent) / 0.5)" maskColor="rgb(0 0 0 / 0.55)" />
         </ReactFlow>
+      )}
+
+      {/* Service drawer — slides in over the canvas, Railway-style. */}
+      {sel && (
+        <>
+          <div className="absolute inset-0 z-10" onClick={() => setSel(null)} />
+          <div className="animate-rise absolute inset-y-0 right-0 z-20 flex w-[62%] min-w-[420px] max-w-[920px] flex-col border-l border-border bg-bg shadow-2xl">
+            <button onClick={() => setSel(null)} title="Close (Esc)" className="absolute right-4 top-4 z-10 grid h-8 w-8 place-items-center rounded-lg text-muted transition hover:bg-bg-secondary hover:text-primary">
+              <Icon.X className="h-4 w-4" />
+            </button>
+            <div className="flex-1 overflow-y-auto px-6 py-6">
+              {sel.kind === 'db'
+                ? <DatabaseDetail key={sel.name} name={sel.name} project={sel.project} onClose={() => setSel(null)} />
+                : <AppDetail key={sel.name} name={sel.name} project={sel.project} onClose={() => setSel(null)} />}
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

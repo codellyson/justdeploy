@@ -44,8 +44,11 @@ function ConnBlock({ label, value, hint, disabled = false, badge }) {
   );
 }
 
-export function DatabaseDetail() {
-  const { project, name } = useParams();
+// Full page (route params) or canvas drawer (name/project props + onClose).
+export function DatabaseDetail({ name: nameProp, project: projProp, onClose } = {}) {
+  const params = useParams();
+  const name = nameProp ?? params.name;
+  const project = projProp ?? params.project;
   const back = project ? `/projects/${project}` : '/'; // return to this database's project canvas
   const navigate = useNavigate();
   const v = useVersion();
@@ -74,7 +77,7 @@ export function DatabaseDetail() {
     try { const { conn } = await api.resetResourcePassword(name); navigator.clipboard?.writeText(conn); invalidate(); toast('password rotated · new connection copied', 'success'); }
     catch (e) { toast(e.message, 'error'); } finally { setBusy(''); }
   };
-  const remove = async () => { if (confirm(`Delete ${name} and its data volume? This cannot be undone.`)) { try { await api.removeResource(name); toast(`${name} removed`); navigate(back); } catch (e) { toast(e.message, 'error'); } } };
+  const remove = async () => { if (confirm(`Delete ${name} and its data volume? This cannot be undone.`)) { try { await api.removeResource(name); toast(`${name} removed`); onClose ? onClose() : navigate(back); } catch (e) { toast(e.message, 'error'); } } };
   const makePrivate = async () => {
     setBusy('expose');
     try { await api.exposeResource(name, false, []); invalidate(); toast('now private (localhost only)', 'success'); }
@@ -88,7 +91,7 @@ export function DatabaseDetail() {
 
   return (
     <div className="animate-rise flex flex-col gap-5">
-      <Link to={back} className="flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> {project || 'Overview'}</Link>
+      {!onClose && <Link to={back} className="flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> {project || 'Overview'}</Link>}
 
       <div className="flex flex-wrap items-center gap-3">
         <SoftIcon icon={Icon.Database} tone="accent" size="h-11 w-11" />
