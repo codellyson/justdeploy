@@ -49,8 +49,19 @@ function SaveBtn({ busy, onClick, children = 'Save' }) {
 
 export function Settings() {
   const [d, setD] = useState(null);
-  const load = () => Promise.all([api.session(), api.state(), api.backupSettings(), api.webhookInfo(), api.backups(), api.host(), api.githubStatus()])
-    .then(([ses, st, bk, wh, bl, host, gh]) => setD({ me: ses.user, st, bk, wh, backups: bl.backups, host, gh }));
+  // Members only fetch what they're allowed to (Password + their own GitHub); the backup/webhook/
+  // host endpoints are admin-only and would 403, so gate those behind the role.
+  const load = async () => {
+    const ses = await api.session();
+    const admin = ses.user?.role === 'admin';
+    const [st, gh] = await Promise.all([api.state(), api.githubStatus().catch(() => ({ mode: 'none' }))]);
+    const next = { me: ses.user, st, gh, bk: {}, wh: {}, backups: [], host: {} };
+    if (admin) {
+      const [bk, wh, bl, host] = await Promise.all([api.backupSettings(), api.webhookInfo(), api.backups(), api.host()]);
+      Object.assign(next, { bk, wh, backups: bl.backups, host });
+    }
+    setD(next);
+  };
   useEffect(() => { load().catch(() => {}); }, []);
   if (!d) return <Spinner className="mx-auto my-16 h-6 w-6" />;
   return <SettingsBody {...d} reload={load} />;
