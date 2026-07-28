@@ -156,6 +156,7 @@ export function Canvas() {
           fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
           minZoom={0.3}
           maxZoom={1.8}
+          proOptions={{ hideAttribution: true }}
           className="bg-bg"
         >
           <Background variant="dots" gap={22} size={1} color={bg} />
