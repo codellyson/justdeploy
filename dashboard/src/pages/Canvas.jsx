@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import ReactFlow, { Background, Controls, MiniMap, useNodesState, useEdgesState, MarkerType, Handle, Position } from 'reactflow';
+import ReactFlow, { Background, Controls, useNodesState, useEdgesState, MarkerType, Handle, Position } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { api } from '../api';
 import { TypeIcon, Icon } from '../components/icons';
@@ -160,7 +160,6 @@ export function Canvas() {
         >
           <Background variant="dots" gap={22} size={1} color={bg} />
           <Controls showInteractive={false} />
-          <MiniMap pannable zoomable nodeColor="rgb(var(--accent) / 0.5)" maskColor="rgb(0 0 0 / 0.55)" />
         </ReactFlow>
       )}
 

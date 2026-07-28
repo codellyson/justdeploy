@@ -526,8 +526,12 @@ WantedBy=multi-user.target
 const DASH_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'dashboard');
 function buildDashboard() {
   if (!existsSync(join(DASH_DIR, 'package.json'))) die('dashboard/ source not found');
-  console.log('building dashboard (npm install + vite build)…');
-  execSync('npm install --no-audit --no-fund', { cwd: DASH_DIR, stdio: 'inherit' });
+  console.log('building dashboard (npm ci + vite build)…');
+  // `npm ci` (not install) so the committed package-lock.json is never rewritten — a modified
+  // lockfile would dirty the working tree and make the next `git pull` abort, silently pinning
+  // deploys to stale code. Falls back to `install` only if there's no lockfile.
+  const ci = existsSync(join(DASH_DIR, 'package-lock.json')) ? 'npm ci --no-audit --no-fund' : 'npm install --no-audit --no-fund';
+  execSync(ci, { cwd: DASH_DIR, stdio: 'inherit' });
   execSync('npm run build', { cwd: DASH_DIR, stdio: 'inherit' });
   console.log('dashboard built → dashboard/dist');
 }
