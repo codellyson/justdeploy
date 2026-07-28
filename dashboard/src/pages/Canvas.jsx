@@ -36,7 +36,7 @@ function ServiceNode({ data }) {
   const st = svcStatus(n);
   return (
     <div className="w-[220px] rounded-2xl border border-border bg-bg-secondary p-3.5 shadow-lg transition hover:border-accent/60">
-      <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-0 !bg-accent/60" />
+      <Handle type="target" position={Position.Left} isConnectable={false} className="!h-1 !w-1 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0" />
       <div className="flex items-center gap-2.5">
         <span className={cx('grid h-8 w-8 shrink-0 place-items-center rounded-lg', n.kind === 'postgres' ? 'bg-accent/[0.12] text-accent' : 'bg-bg')}>
           {n.kind === 'postgres' ? <Icon.Database className="h-4 w-4" /> : <TypeIcon type={n.type} className="h-4 w-4" />}
@@ -50,7 +50,7 @@ function ServiceNode({ data }) {
         <span className={cx('h-1.5 w-1.5 rounded-full', st.dot)} />
         <span className={cx('text-xs', st.tone)}>{st.text}</span>
       </div>
-      <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-0 !bg-accent/60" />
+      <Handle type="source" position={Position.Right} isConnectable={false} className="!h-1 !w-1 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0" />
     </div>
   );
 }
