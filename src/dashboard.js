@@ -236,7 +236,7 @@ function setBackupSchedule(interval, keep = 7) {
 function appView(database, a) {
   const last = db.latestDeploy(database, a.name);
   return {
-    name: a.name, type: a.type, serve: a.serve, domain: a.domain,
+    name: a.name, type: a.type, serve: a.serve, domain: a.domain, owner: a.owner,
     repo: a.repo, live_port: a.live_port, live_pid: a.live_pid,
     release_cmd: a.release_cmd, persist: a.persist,
     rollbackTo: db.rollbackTarget(database, a.name),
@@ -565,8 +565,8 @@ export async function api(database, req, res, path) {
     const resources = db.listResources(database, scope);
     const projects = db.listProjects(database, scope).map((p) => {
       const pa = apps.filter((a) => (a.project || 'default') === p.name).map((a) => ({ kind: 'app', ...appView(database, a) }));
-      const pr = resources.filter((r) => (r.project || 'default') === p.name).map((r) => ({ kind: r.kind, name: r.name }));
-      return { name: p.name, created_at: p.created_at, apps: pa, resources: pr };
+      const pr = resources.filter((r) => (r.project || 'default') === p.name).map((r) => ({ kind: r.kind, name: r.name, owner: r.owner }));
+      return { name: p.name, created_at: p.created_at, owner: p.owner, apps: pa, resources: pr };
     });
     return send(res, 200, { projects });
   }

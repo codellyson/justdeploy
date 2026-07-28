@@ -22,7 +22,7 @@ function ServiceRow({ s }) {
   );
 }
 
-function ProjectCard({ p }) {
+function ProjectCard({ p, showOwner }) {
   const services = [...p.apps, ...p.resources];
   const n = services.length;
   const failed = p.apps.some((a) => appHealth(a) === 'failed');
@@ -31,7 +31,12 @@ function ProjectCard({ p }) {
       <div className="mb-3 flex items-center gap-2.5">
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-accent/[0.12] text-accent"><Icon.Canvas className="h-4 w-4" /></span>
         <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold">{p.name}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="truncate font-semibold">{p.name}</span>
+            {showOwner && p.owner && (
+              <span className="shrink-0 rounded-full bg-bg-secondary px-1.5 py-0.5 font-mono text-[0.6rem] text-muted" title={`owned by ${p.owner}`}>@{p.owner}</span>
+            )}
+          </div>
           <div className="font-mono text-[0.68rem] text-muted">{n} service{n === 1 ? '' : 's'}</div>
         </div>
         <span className={cx('h-2 w-2 rounded-full', failed ? 'bg-danger' : n ? 'bg-success' : 'bg-muted')} />
@@ -103,7 +108,7 @@ export function Overview() {
         </div>
       ) : (
         <div className="stagger grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {shown.map((p, i) => <div key={p.name} style={{ '--i': i }}><ProjectCard p={p} /></div>)}
+          {shown.map((p, i) => <div key={p.name} style={{ '--i': i }}><ProjectCard p={p} showOwner={isAdmin} /></div>)}
         </div>
       )}
     </div>
