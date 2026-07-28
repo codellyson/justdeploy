@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import ReactFlow, { Background, Controls, MiniMap, useNodesState, useEdgesState, MarkerType, Handle, Position } from 'reactflow';
+import 'reactflow/dist/style.css';
 import { api } from '../api';
 import { TypeIcon, Icon } from '../components/icons';
-import { StatusDot, Spinner } from '../components/ui';
+import { Spinner } from '../components/ui';
 import { appHealth, typeLabel, cx } from '../lib/format';
-
-const NW = 220, NH = 92; // node card size
 
 // Railway-style status line for a service node.
 function svcStatus(n) {
@@ -17,108 +17,116 @@ function svcStatus(n) {
   return { text: 'Not deployed', tone: 'text-muted', dot: 'bg-muted' };
 }
 
-// Lightweight force-directed layout — repulsion between all nodes, springs along edges, gentle
-// gravity to center. Runs once; nodes are draggable afterward.
-function layout(nodes, edges, w, h) {
+// Simple circular seed layout — React Flow owns positions after that (drag/pan/zoom).
+function seedPositions(nodes) {
   const p = {};
+  const R = Math.max(180, nodes.length * 34);
   nodes.forEach((n, i) => {
     const a = (i / Math.max(nodes.length, 1)) * Math.PI * 2;
-    p[n.name] = { x: w / 2 + Math.cos(a) * 190, y: h / 2 + Math.sin(a) * 150 };
+    p[n.name] = { x: 400 + Math.cos(a) * R, y: 300 + Math.sin(a) * R * 0.7 };
   });
-  for (let it = 0; it < 320; it++) {
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = p[nodes[i].name], b = p[nodes[j].name];
-        let dx = a.x - b.x, dy = a.y - b.y; const d2 = dx * dx + dy * dy || 0.01, d = Math.sqrt(d2);
-        const f = 26000 / d2; dx = (dx / d) * f; dy = (dy / d) * f;
-        a.x += dx; a.y += dy; b.x -= dx; b.y -= dy;
-      }
-    }
-    for (const e of edges) {
-      const a = p[e.from], b = p[e.to]; if (!a || !b) continue;
-      let dx = b.x - a.x, dy = b.y - a.y; const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      const f = (d - 230) * 0.03; dx = (dx / d) * f; dy = (dy / d) * f;
-      a.x += dx; a.y += dy; b.x -= dx; b.y -= dy;
-    }
-    for (const n of nodes) { const q = p[n.name]; q.x += (w / 2 - q.x) * 0.006; q.y += (h / 2 - q.y) * 0.006; }
-  }
   return p;
 }
 
-// A cubic bezier between two node centers, biased horizontally for a clean routed look.
-function edgePath(a, b) {
-  const mx = (a.x + b.x) / 2;
-  return `M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`;
+// A service card rendered as a React Flow node.
+function ServiceNode({ data }) {
+  const n = data.node;
+  const st = svcStatus(n);
+  return (
+    <div className="w-[220px] rounded-2xl border border-border bg-bg-secondary p-3.5 shadow-lg transition hover:border-accent/60">
+      <Handle type="target" position={Position.Left} className="!h-2 !w-2 !border-0 !bg-accent/60" />
+      <div className="flex items-center gap-2.5">
+        <span className={cx('grid h-8 w-8 shrink-0 place-items-center rounded-lg', n.kind === 'postgres' ? 'bg-accent/[0.12] text-accent' : 'bg-bg')}>
+          {n.kind === 'postgres' ? <Icon.Database className="h-4 w-4" /> : <TypeIcon type={n.type} className="h-4 w-4" />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold">{n.name}</div>
+          <div className="truncate font-mono text-[0.62rem] text-muted">{n.kind === 'postgres' ? 'postgres' : typeLabel(n.type)}</div>
+        </div>
+      </div>
+      <div className="mt-2.5 flex items-center gap-1.5">
+        <span className={cx('h-1.5 w-1.5 rounded-full', st.dot)} />
+        <span className={cx('text-xs', st.tone)}>{st.text}</span>
+      </div>
+      <Handle type="source" position={Position.Right} className="!h-2 !w-2 !border-0 !bg-accent/60" />
+    </div>
+  );
 }
+
+const nodeTypes = { service: ServiceNode };
 
 export function Canvas() {
   const navigate = useNavigate();
   const { name: project } = useParams(); // set on /projects/:name, undefined on /canvas
-  const [g, setG] = useState(null);
-  const [pos, setPos] = useState({});
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [scale, setScale] = useState(1);
-  const [hover, setHover] = useState(null);
-  const drag = useRef(null);
-  const zoom = (f) => setScale((s) => Math.min(1.6, Math.max(0.4, s * f)));
-  const resetView = () => { setScale(1); setPan({ x: 0, y: 0 }); };
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const ready = useRef(false);
+  const posRef = useRef({}); // remember positions across polls / drags
 
   useEffect(() => {
     let live = true;
-    setG(null); setPos({});
-    const load = () => api.graph(project).then((d) => {
+    ready.current = false; posRef.current = {};
+    setNodes([]); setEdges([]);
+    const load = () => api.graph(project).then((g) => {
       if (!live) return;
-      setG(d);
-      setPos((prev) => (Object.keys(prev).length ? prev : layout(d.nodes, d.edges, 960, 560)));
+      const seed = seedPositions(g.nodes);
+      setNodes((prev) => {
+        const prevPos = Object.fromEntries(prev.map((nd) => [nd.id, nd.position]));
+        return g.nodes.map((n) => ({
+          id: n.name,
+          type: 'service',
+          position: prevPos[n.name] || posRef.current[n.name] || seed[n.name],
+          data: { node: n },
+          draggable: true,
+        }));
+      });
+      setEdges(g.edges.map((e) => ({
+        id: `${e.from}->${e.to}`,
+        source: e.from,
+        target: e.to,
+        markerEnd: { type: MarkerType.ArrowClosed, color: 'rgb(148 130 90)' },
+        style: { stroke: 'rgb(148 130 90 / 0.55)', strokeWidth: 1.5 },
+      })));
+      ready.current = true;
     }).catch(() => {});
     load();
-    const t = setInterval(load, 4000); // keep statuses live; positions preserved
+    const t = setInterval(load, 4000);
     return () => { live = false; clearInterval(t); };
-  }, [project]);
+  }, [project, setNodes, setEdges]);
 
-  const onDown = (e, name) => {
-    e.stopPropagation();
-    drag.current = { name, sx: e.clientX, sy: e.clientY, ox: pos[name].x, oy: pos[name].y, moved: false };
-  };
-  const onPanDown = (e) => { drag.current = { pan: true, sx: e.clientX, sy: e.clientY, ox: pan.x, oy: pan.y }; };
-  const onMove = (e) => {
-    const d = drag.current; if (!d) return;
-    const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
-    if (Math.abs(dx) + Math.abs(dy) > 3) d.moved = true;
-    if (d.pan) setPan({ x: d.ox + dx, y: d.oy + dy });
-    // Node coords live in unscaled canvas space, so convert the screen delta by the zoom.
-    else setPos((p) => ({ ...p, [d.name]: { x: d.ox + dx / scale, y: d.oy + dy / scale } }));
-  };
-  const onUp = (name) => {
-    const d = drag.current; drag.current = null;
-    if (!name || !d || d.moved) return;
-    const node = g.nodes.find((n) => n.name === name);
-    const proj = project || node?.project || 'default'; // global canvas: use the node's own project
-    navigate(`/projects/${proj}/${name}`, { state: { kind: node?.kind === 'postgres' ? 'db' : 'app' } });
-  };
+  // Persist positions as the user drags so a poll refresh doesn't reset them.
+  const onNodeDragStop = useCallback((_e, node) => { posRef.current[node.id] = node.position; }, []);
 
-  if (!g) return <Spinner className="mx-auto my-20 h-6 w-6" />;
-  const center = (name) => { const q = pos[name]; return q ? { x: q.x + NW / 2, y: q.y + NH / 2 } : null; };
-  const connected = (name) => hover && (name === hover || g.edges.some((e) => (e.from === hover && e.to === name) || (e.to === hover && e.from === name)));
+  const onNodeClick = useCallback((_e, node) => {
+    const n = node.data.node;
+    const proj = project || n.project || 'default';
+    navigate(`/projects/${proj}/${n.name}`, { state: { kind: n.kind === 'postgres' ? 'db' : 'app' } });
+  }, [navigate, project]);
+
+  const empty = ready.current && nodes.length === 0;
+  const bg = useMemo(() => 'rgb(var(--border))', []);
 
   return (
-    <div className="animate-rise">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <Link to="/" className="mb-1.5 flex w-fit items-center gap-1.5 text-sm text-muted transition hover:text-primary"><Icon.ArrowLeft className="h-4 w-4" /> {project ? 'Projects' : 'Overview'}</Link>
-          <div className="flex items-center gap-2.5">
-            {project && <span className="grid h-8 w-8 place-items-center rounded-xl bg-accent/[0.12] text-accent"><Icon.Canvas className="h-4 w-4" /></span>}
-            <h1 className="text-2xl font-semibold tracking-tight">{project || 'Canvas'}</h1>
-          </div>
-          <p className="mt-0.5 text-sm text-muted">{project ? 'This project’s services' : 'Your apps and databases'}, wired by their <code className="rounded bg-bg-secondary px-1 font-mono text-[0.75rem] text-accent">{'${{ }}'}</code> references. Drag to arrange · click to open.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {project && <button onClick={() => navigate(`/new?project=${project}`)} className="flex items-center gap-1.5 rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06]"><Icon.Plus className="h-4 w-4" /> Add service</button>}
-        </div>
+    // Full-bleed canvas: fill the viewport to the right of the sidebar (w-56 = 14rem).
+    <div className="fixed inset-y-0 right-0 z-0" style={{ left: '14rem' }}>
+      {/* floating breadcrumb (top-left) */}
+      <div className="pointer-events-none absolute left-4 top-4 z-10 flex items-center gap-2">
+        <Link to="/" className="pointer-events-auto flex items-center gap-1.5 rounded-lg border border-border bg-bg-secondary/90 px-2.5 py-1.5 text-sm text-muted backdrop-blur transition hover:text-primary">
+          <Icon.ArrowLeft className="h-4 w-4" /> {project ? 'Projects' : 'Overview'}
+        </Link>
+        <span className="rounded-lg border border-border bg-bg-secondary/90 px-2.5 py-1.5 text-sm font-semibold backdrop-blur">{project || 'Canvas'}</span>
       </div>
+      {/* floating add button (top-right) */}
+      {project && (
+        <button onClick={() => navigate(`/new?project=${project}`)} className="absolute right-4 top-4 z-10 flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] shadow-lg transition hover:brightness-[1.06]">
+          <Icon.Plus className="h-4 w-4" /> Add service
+        </button>
+      )}
 
-      {g.nodes.length === 0 ? (
-        <div className="surface grid place-items-center py-24 text-center text-muted">
+      {!ready.current ? (
+        <div className="grid h-full place-items-center"><Spinner className="h-6 w-6" /></div>
+      ) : empty ? (
+        <div className="grid h-full place-items-center text-center text-muted">
           <div className="flex flex-col items-center gap-3">
             <Icon.Layers className="h-8 w-8 opacity-40" />
             <p className="text-sm">{project ? 'This project has no services yet.' : 'No apps yet — deploy one and it’ll appear here.'}</p>
@@ -126,61 +134,24 @@ export function Canvas() {
           </div>
         </div>
       ) : (
-        <div
-          onMouseDown={onPanDown} onMouseMove={onMove} onMouseUp={() => onUp(null)} onMouseLeave={() => (drag.current = null)}
-          className="relative h-[72vh] min-h-[460px] cursor-grab overflow-hidden rounded-2xl border border-border bg-bg active:cursor-grabbing"
-          style={{ backgroundImage: 'radial-gradient(rgb(var(--border)) 1px, transparent 1px)', backgroundSize: `${22 * scale}px ${22 * scale}px`, backgroundPosition: `${pan.x}px ${pan.y}px` }}
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={onNodeClick}
+          onNodeDragStop={onNodeDragStop}
+          fitView
+          fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
+          minZoom={0.3}
+          maxZoom={1.8}
+          className="bg-bg"
         >
-          <div className="absolute inset-0" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, transformOrigin: '0 0' }}>
-            <svg className="pointer-events-none absolute overflow-visible" style={{ left: 0, top: 0 }}>
-              <defs>
-                <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="rgb(var(--accent))" /></marker>
-              </defs>
-              {g.edges.map((e, i) => {
-                const a = center(e.from), b = center(e.to); if (!a || !b) return null;
-                const lit = hover && (e.from === hover || e.to === hover);
-                return <path key={i} d={edgePath(a, b)} fill="none" markerEnd="url(#arrow)"
-                  stroke={lit ? 'rgb(var(--accent))' : 'rgb(var(--accent) / 0.35)'} strokeWidth={lit ? 2 : 1.5} />;
-              })}
-            </svg>
-            {g.nodes.map((n) => {
-              const q = pos[n.name]; if (!q) return null;
-              const dim = hover && !connected(n.name);
-              return (
-                <div key={n.name} onMouseDown={(e) => onDown(e, n.name)} onMouseUp={(e) => { e.stopPropagation(); onUp(n.name); }}
-                  onMouseEnter={() => setHover(n.name)} onMouseLeave={() => setHover(null)}
-                  className={cx('group absolute flex cursor-pointer select-none flex-col justify-between rounded-2xl border bg-bg-secondary p-3.5 shadow-lg transition',
-                    hover === n.name ? 'border-accent/60' : n.kind === 'postgres' ? 'border-accent/25' : 'border-border', dim ? 'opacity-40' : 'opacity-100')}
-                  style={{ left: q.x, top: q.y, width: NW, height: NH }}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span className={cx('grid h-8 w-8 shrink-0 place-items-center rounded-lg', n.kind === 'postgres' ? 'bg-accent/[0.12] text-accent' : 'bg-bg')}>
-                      {n.kind === 'postgres' ? <Icon.Database className="h-4 w-4" /> : <TypeIcon type={n.type} className="h-4 w-4" />}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-semibold">{n.name}</div>
-                      <div className="truncate font-mono text-[0.62rem] text-muted">{n.kind === 'postgres' ? 'postgres' : typeLabel(n.type)}</div>
-                    </div>
-                  </div>
-                  {(() => { const st = svcStatus(n); return (
-                    <div className="flex items-center gap-1.5">
-                      <span className={cx('h-1.5 w-1.5 rounded-full', st.dot)} />
-                      <span className={cx('text-xs', st.tone)}>{st.text}</span>
-                    </div>
-                  ); })()}
-                </div>
-              );
-            })}
-          </div>
-          {/* floating zoom controls (Railway-style) */}
-          <div className="absolute bottom-4 left-4 flex flex-col overflow-hidden rounded-xl border border-border bg-bg-secondary/90 shadow-lg backdrop-blur" onMouseDown={(e) => e.stopPropagation()}>
-            <button onClick={() => zoom(1.2)} title="Zoom in" className="grid h-9 w-9 place-items-center text-muted transition hover:bg-bg hover:text-primary"><Icon.Plus className="h-4 w-4" /></button>
-            <button onClick={() => zoom(1 / 1.2)} title="Zoom out" className="grid h-9 w-9 place-items-center border-t border-border text-lg leading-none text-muted transition hover:bg-bg hover:text-primary">–</button>
-            <button onClick={resetView} title="Reset view" className="grid h-9 w-9 place-items-center border-t border-border text-muted transition hover:bg-bg hover:text-primary"><Icon.Canvas className="h-4 w-4" /></button>
-            <button onClick={() => setPos(layout(g.nodes, g.edges, 960, 560))} title="Auto-arrange" className="grid h-9 w-9 place-items-center border-t border-border text-muted transition hover:bg-bg hover:text-primary"><Icon.Layers className="h-4 w-4" /></button>
-          </div>
-          <div className="pointer-events-none absolute bottom-4 right-4 font-mono text-[0.7rem] text-muted">{g.nodes.length} nodes · {g.edges.length} links · {Math.round(scale * 100)}%</div>
-        </div>
+          <Background variant="dots" gap={22} size={1} color={bg} />
+          <Controls showInteractive={false} />
+          <MiniMap pannable zoomable nodeColor="rgb(var(--accent) / 0.5)" maskColor="rgb(0 0 0 / 0.55)" />
+        </ReactFlow>
       )}
     </div>
   );

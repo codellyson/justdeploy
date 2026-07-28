@@ -100,3 +100,17 @@ html:not(.dark) { --jd-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 10px 30px rgb(0 0 
 @media (prefers-reduced-motion: reduce) {
   *, .animate-rise, .stagger > *, .pulse-dot { animation: none !important; }
 }
+
+/* React Flow — theme its chrome to the dashboard's dark palette. */
+.react-flow__controls { box-shadow: none; border: 1px solid rgb(var(--border)); border-radius: 0.6rem; overflow: hidden; }
+.react-flow__controls-button {
+  background: rgb(var(--bg-secondary)); border-bottom: 1px solid rgb(var(--border));
+  color: rgb(var(--muted)); width: 30px; height: 30px;
+}
+.react-flow__controls-button:hover { background: rgb(var(--bg)); color: rgb(var(--primary)); }
+.react-flow__controls-button svg { fill: currentColor; }
+.react-flow__minimap { background: rgb(var(--bg-secondary)); border: 1px solid rgb(var(--border)); border-radius: 0.6rem; }
+.react-flow__attribution { background: transparent; }
+.react-flow__attribution a { color: rgb(var(--muted) / 0.6); font-size: 10px; }
+.react-flow__node:focus, .react-flow__node:focus-visible { outline: none; }
+.react-flow__handle { border: none; }
