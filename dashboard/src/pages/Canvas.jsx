@@ -172,10 +172,17 @@ export function Canvas() {
   // --- right-click context menus ---
   const onNodeContextMenu = useCallback((e, node) => {
     e.preventDefault();
+    e.stopPropagation();
+    e.nativeEvent?.stopImmediatePropagation?.(); // pane handler is a native listener — stop it too
     if (!node.data?.node) return; // group containers have no service actions
     setMenu({ x: e.clientX, y: e.clientY, node: node.data.node });
   }, []);
-  const onPaneContextMenu = useCallback((e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, pane: true }); }, []);
+  const onPaneContextMenu = useCallback((e) => {
+    e.preventDefault();
+    // Only the bare pane — ignore bubbled events that started on a node.
+    if (e.target && !e.target.classList?.contains('react-flow__pane')) return;
+    setMenu({ x: e.clientX, y: e.clientY, pane: true });
+  }, []);
 
   const groupNames = useMemo(() => [...new Set(nodes.map((nd) => nd.data?.node?.group).filter(Boolean))], [nodes]);
   const openNode = (n) => { setMenu(null); setSel({ name: n.name, kind: n.kind === 'postgres' ? 'db' : 'app', project: project || n.project || 'default' }); };
