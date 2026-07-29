@@ -31,9 +31,16 @@ function seedPositions(nodes) {
   return p;
 }
 
+// Estimate a service card's rendered height so grouped members can flow-stack without overlap or gaps.
+// (A card is ~86px, plus a volume block whose rows scale with the persist list / postgres volume.)
+function cardHeight(n) {
+  const v = n.kind === 'postgres' ? 1 : (n.persist || '').split(',').map((s) => s.trim()).filter(Boolean).length;
+  return v ? 86 + 19 + v * 16 + (v - 1) * 4 : 86;
+}
+
 // Build React Flow nodes. With no groups → free layout (seed + remembered positions). With groups
-// → deterministic: each group is a container box holding its members stacked; ungrouped go loose.
-const GW = 268, GAP = 44, HEADER = 46, SPACING = 138, PAD = 14;
+// → deterministic: each group is a container box holding its members flow-stacked; ungrouped go loose.
+const GW = 268, GAP = 44, HEADER = 44, GAP_Y = 20, PAD = 16;
 function buildNodes(graphNodes, prevPos, remembered, seed) {
   const grouped = graphNodes.some((n) => n.group);
   if (!grouped) {
@@ -47,11 +54,13 @@ function buildNodes(graphNodes, prevPos, remembered, seed) {
   let gx = 0;
   for (const gname of groups) {
     const members = graphNodes.filter((n) => n.group === gname);
+    let cy = HEADER;
+    const ys = members.map((n) => { const y = cy; cy += cardHeight(n) + GAP_Y; return y; });
     out.push({ id: `grp:${gname}`, type: 'group', draggable: true, selectable: false, data: { label: gname },
-      position: { x: gx, y: 0 }, style: { width: GW, height: HEADER + members.length * SPACING + PAD } });
+      position: { x: gx, y: 0 }, style: { width: GW, height: cy - GAP_Y + PAD } });
     members.forEach((n, i) => out.push({
       id: n.name, type: 'service', draggable: true, parentNode: `grp:${gname}`, extent: 'parent',
-      position: { x: (GW - 220) / 2, y: HEADER + i * SPACING }, data: { node: n },
+      position: { x: (GW - 220) / 2, y: ys[i] }, data: { node: n },
     }));
     gx += GW + GAP;
   }
@@ -102,12 +111,13 @@ function ServiceNode({ data }) {
   );
 }
 
-// A labeled container box grouping related services on the canvas.
+// A labeled container box grouping related services on the canvas. Kept light (dashed boundary + a
+// faint lift + a small floating label) so it reads as a boundary, not a slab competing with the cards.
 function GroupNode({ data }) {
   return (
-    <div className="h-full w-full rounded-2xl border border-border bg-bg-secondary/25">
-      <div className="flex items-center gap-2 px-3.5 py-2.5 text-sm font-semibold">
-        <Icon.Layers className="h-4 w-4 text-accent" /> <span className="truncate">{data.label}</span>
+    <div className="relative h-full w-full rounded-2xl border border-dashed border-border bg-white/[0.02]">
+      <div className="absolute left-3 top-3 flex max-w-[calc(100%-1.5rem)] items-center gap-1.5 rounded-md bg-bg-secondary/80 px-2 py-1 text-[0.68rem] font-medium text-muted backdrop-blur">
+        <Icon.Layers className="h-3 w-3 shrink-0 text-accent/80" /> <span className="truncate">{data.label}</span>
       </div>
     </div>
   );
