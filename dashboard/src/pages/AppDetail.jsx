@@ -59,6 +59,10 @@ export function AppDetail({ name: nameProp, project: projProp, onClose } = {}) {
   const rollback = () => { if (confirm(`Roll back to ${shortSha(app.rollbackTo)}?`)) act('rollback', () => api.rollback(name), 'Logs'); };
   const rollbackSha = (sha) => { if (confirm(`Roll back to ${shortSha(sha)}?`)) act('rollback', () => api.rollback(name, sha), 'Logs'); };
   const remove = () => { if (confirm(`Delete ${name}? Removes files and stops it.`)) act('delete', async () => { await api.remove(name); onClose ? onClose() : navigate(back); toast(`${name} removed`); }); };
+  const saveGroup = (v) => {
+    if ((v || '').trim() === (app.group || '')) return; // unchanged
+    act('group', () => api.setConfig(name, { group: (v || '').trim() })).then(() => toast('group updated'));
+  };
 
   return (
     <div className="animate-rise flex flex-col gap-5">
@@ -77,6 +81,14 @@ export function AppDetail({ name: nameProp, project: projProp, onClose } = {}) {
               <Icon.Globe className="h-3.5 w-3.5" />{app.domain}<Icon.ExternalLink className="h-3 w-3" />
             </a>
           )}
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-muted">
+            <Icon.Layers className="h-3.5 w-3.5" /> <span>Canvas group</span>
+            <input
+              key={app.group || ''} defaultValue={app.group || ''} placeholder="none"
+              onBlur={(e) => saveGroup(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+              className="field w-36 py-1 text-xs"
+            />
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           {app.rollbackTo && <button disabled={!!busy} onClick={rollback} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-sm font-medium transition hover:border-muted/50 disabled:opacity-60"><Icon.Rollback className="h-4 w-4" /> Rollback</button>}

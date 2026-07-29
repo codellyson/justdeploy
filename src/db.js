@@ -100,6 +100,7 @@ export function open(file = STATE_DB) {
     'ALTER TABLE apps ADD COLUMN owner TEXT',
     'ALTER TABLE resources ADD COLUMN owner TEXT',
     'ALTER TABLE projects ADD COLUMN owner TEXT',
+    'ALTER TABLE apps ADD COLUMN grp TEXT', // optional sub-group within a project (canvas)
   ]) { try { db.exec(alter); } catch { /* column already exists */ } }
   // Every service belongs to a project; ungrouped ones (and older dbs) land in 'default'.
   db.prepare("INSERT INTO projects (name, created_at) VALUES ('default', ?) ON CONFLICT(name) DO NOTHING")
@@ -153,12 +154,14 @@ export const listProjects = (db, owner = null) =>
 export const getProject = (db, name) => db.prepare('SELECT * FROM projects WHERE name=?').get(name);
 export const createProject = (db, name, at, owner = null) =>
   db.prepare('INSERT INTO projects (name, created_at, owner) VALUES (?, ?, ?) ON CONFLICT(name) DO NOTHING').run(name, at, owner);
-export function removeProject(db, name) {
-  // Reassign the project's services to 'default', then drop it (never delete apps/dbs here).
-  db.prepare("UPDATE apps SET project='default' WHERE project=?").run(name);
-  db.prepare("UPDATE resources SET project='default' WHERE project=?").run(name);
+export function removeProject(db, name, fallback = 'default') {
+  // Reassign the project's services to `fallback`, then drop it (never delete apps/dbs here).
+  db.prepare('UPDATE apps SET project=? WHERE project=?').run(fallback, name);
+  db.prepare('UPDATE resources SET project=? WHERE project=?').run(fallback, name);
   db.prepare("DELETE FROM projects WHERE name=? AND name!='default'").run(name);
 }
+export const setAppGroup = (db, name, grp) =>
+  db.prepare('UPDATE apps SET grp=? WHERE name=?').run(grp || null, name);
 export const setAppProject = (db, name, project) =>
   db.prepare('UPDATE apps SET project=? WHERE name=?').run(project, name);
 export const setResourceProject = (db, name, project) =>

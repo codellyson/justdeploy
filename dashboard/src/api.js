@@ -28,6 +28,7 @@ export const api = {
   projects: () => req('/projects'),
   createProject: (name) => req('/projects', { method: 'POST', body: { name } }),
   removeProject: (name) => req(`/projects/${name}`, { method: 'DELETE' }),
+  syncProject: (name) => req(`/projects/${name}/sync`, { method: 'POST' }),
 
   createApp: (body) => req('/apps', { method: 'POST', body }),
   deploy: (name) => req(`/apps/${name}/deploy`, { method: 'POST' }),

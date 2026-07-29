@@ -236,7 +236,7 @@ function setBackupSchedule(interval, keep = 7) {
 function appView(database, a) {
   const last = db.latestDeploy(database, a.name);
   return {
-    name: a.name, type: a.type, serve: a.serve, domain: a.domain, owner: a.owner,
+    name: a.name, type: a.type, serve: a.serve, domain: a.domain, owner: a.owner, group: a.grp,
     repo: a.repo, live_port: a.live_port, live_pid: a.live_pid,
     release_cmd: a.release_cmd, persist: a.persist,
     rollbackTo: db.rollbackTarget(database, a.name),
@@ -585,8 +585,21 @@ export async function api(database, req, res, path) {
   if (pm && req.method === 'DELETE') {
     if (pm[1] === 'default') return send(res, 400, { error: 'the default project cannot be removed' });
     if (denyNotOwner(db.getProject(database, pm[1]))) return;
-    db.removeProject(database, pm[1]); // services fall back to 'default'
+    // Services fall back to the remover's own default project so members don't lose sight of them.
+    const fallback = isAdmin ? 'default' : user.username;
+    db.createProject(database, fallback, now(), user.username);
+    db.removeProject(database, pm[1], fallback);
     return send(res, 200, { ok: true });
+  }
+  // Sync a whole project: redeploy every deployable app it owns (pull latest + rebuild).
+  const psync = path.match(/^\/api\/projects\/([a-z0-9-]+)\/sync$/);
+  if (psync && req.method === 'POST') {
+    const proj = psync[1];
+    if (denyNotOwner(db.getProject(database, proj))) return;
+    const apps = db.listApps(database, isAdmin ? null : user.username)
+      .filter((a) => (a.project || 'default') === proj && a.repo && a.serve !== 'resource');
+    for (const a of apps) kickDeploy(database, a.name);
+    return send(res, 200, { ok: true, syncing: apps.map((a) => a.name) });
   }
   if (path === '/api/settings/base-domain' && req.method === 'PUT') {
     const { domain } = await body(req);
@@ -863,7 +876,7 @@ export async function api(database, req, res, path) {
     }
 
     if (sub === 'config' && req.method === 'PUT') {
-      const { release, persist, health_path, subdir } = await body(req);
+      const { release, persist, health_path, subdir, group } = await body(req);
       let root;
       try { root = subdir === undefined ? undefined : (normSubdir(subdir) || null); }
       catch (e) { return send(res, 400, { error: e.message }); }
@@ -872,6 +885,8 @@ export async function api(database, req, res, path) {
         ...(health_path ? { health_path } : {}),
         ...(root === undefined ? {} : { subdir: root }),
       });
+      // Group is its own column; a canvas-only grouping label (no redeploy needed).
+      if (group !== undefined) db.setAppGroup(database, name, String(group || '').trim() || null);
       return send(res, 200, { ok: true });
     }
 

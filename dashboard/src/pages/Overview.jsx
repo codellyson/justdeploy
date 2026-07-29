@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useOutletContext } from 'react-router-dom';
 import { api } from '../api';
+import { toast } from '../components/toast';
 import { useVersion } from '../lib/store';
 import { StatusDot, Spinner } from '../components/ui';
 import { TypeIcon, Icon } from '../components/icons';
@@ -20,7 +21,7 @@ function ServiceTile({ s }) {
   );
 }
 
-function ProjectCard({ p, showOwner }) {
+function ProjectCard({ p, showOwner, onDelete }) {
   const services = [...p.apps, ...p.resources];
   const n = services.length;
   const failed = p.apps.some((a) => appHealth(a) === 'failed');
@@ -32,6 +33,15 @@ function ProjectCard({ p, showOwner }) {
         <span className="min-w-0 truncate font-semibold">{p.name}</span>
         {showOwner && p.owner && (
           <span className="shrink-0 rounded-full bg-bg-secondary px-1.5 py-0.5 font-mono text-[0.6rem] text-muted" title={`owned by ${p.owner}`}>@{p.owner}</span>
+        )}
+        {p.name !== 'default' && (
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDelete(p); }}
+            title="Delete project"
+            className="ml-auto grid h-7 w-7 shrink-0 place-items-center rounded-lg text-muted opacity-0 transition hover:bg-bg hover:text-danger group-hover:opacity-100"
+          >
+            <Icon.Trash className="h-3.5 w-3.5" />
+          </button>
         )}
       </div>
       {/* mini-canvas preview */}
@@ -71,6 +81,16 @@ export function Overview() {
     return () => { live = false; clearInterval(t); };
   }, [v]);
   const reload = () => Promise.all([api.state(), api.projects()]).then(([s, p]) => { setState(s); setProjects(p.projects); }).catch(() => {});
+
+  const delProject = async (p) => {
+    const n = p.apps.length + p.resources.length;
+    const msg = n
+      ? `Delete project “${p.name}”? Its ${n} service${n === 1 ? '' : 's'} move to your default project — nothing is deleted.`
+      : `Delete project “${p.name}”?`;
+    if (!window.confirm(msg)) return;
+    try { await api.removeProject(p.name); toast(`deleted ${p.name}`, 'success'); reload(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
 
   if (!state || !projects) {
     return (
@@ -129,7 +149,7 @@ export function Overview() {
         </div>
       ) : (
         <div className="stagger grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {shown.map((p, i) => <div key={p.name} style={{ '--i': i }}><ProjectCard p={p} showOwner={isAdmin} /></div>)}
+          {shown.map((p, i) => <div key={p.name} style={{ '--i': i }}><ProjectCard p={p} showOwner={isAdmin} onDelete={delProject} /></div>)}
           {shown.length === 0 && <p className="col-span-full py-8 text-center text-sm text-muted">No projects match “{q}”.</p>}
         </div>
       )}

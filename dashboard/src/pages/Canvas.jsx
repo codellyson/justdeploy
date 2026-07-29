@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import ReactFlow, { Background, Controls, useNodesState, useEdgesState, MarkerType, Handle, Position } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { api } from '../api';
+import { toast } from '../components/toast';
 import { TypeIcon, Icon } from '../components/icons';
 import { Spinner } from '../components/ui';
 import { appHealth, typeLabel, cx } from '../lib/format';
@@ -30,6 +31,36 @@ function seedPositions(nodes) {
   return p;
 }
 
+// Build React Flow nodes. With no groups → free layout (seed + remembered positions). With groups
+// → deterministic: each group is a container box holding its members stacked; ungrouped go loose.
+const GW = 268, GAP = 44, HEADER = 46, SPACING = 138, PAD = 14;
+function buildNodes(graphNodes, prevPos, remembered, seed) {
+  const grouped = graphNodes.some((n) => n.group);
+  if (!grouped) {
+    return graphNodes.map((n) => ({
+      id: n.name, type: 'service', draggable: true, data: { node: n },
+      position: prevPos[n.name] || remembered[n.name] || seed[n.name],
+    }));
+  }
+  const out = [];
+  const groups = [...new Set(graphNodes.filter((n) => n.group).map((n) => n.group))];
+  let gx = 0;
+  for (const gname of groups) {
+    const members = graphNodes.filter((n) => n.group === gname);
+    out.push({ id: `grp:${gname}`, type: 'group', draggable: true, selectable: false, data: { label: gname },
+      position: { x: gx, y: 0 }, style: { width: GW, height: HEADER + members.length * SPACING + PAD } });
+    members.forEach((n, i) => out.push({
+      id: n.name, type: 'service', draggable: true, parentNode: `grp:${gname}`, extent: 'parent',
+      position: { x: (GW - 220) / 2, y: HEADER + i * SPACING }, data: { node: n },
+    }));
+    gx += GW + GAP;
+  }
+  graphNodes.filter((n) => !n.group).forEach((n, i) => out.push({
+    id: n.name, type: 'service', draggable: true, position: { x: gx + 20, y: i * SPACING }, data: { node: n },
+  }));
+  return out;
+}
+
 // A service card rendered as a React Flow node.
 function ServiceNode({ data }) {
   const n = data.node;
@@ -50,12 +81,39 @@ function ServiceNode({ data }) {
         <span className={cx('h-1.5 w-1.5 rounded-full', st.dot)} />
         <span className={cx('text-xs', st.tone)}>{st.text}</span>
       </div>
+      {(() => {
+        const vols = n.kind === 'postgres'
+          ? ['data']
+          : (n.persist || '').split(',').map((s) => s.trim()).filter(Boolean);
+        if (!vols.length) return null;
+        return (
+          <div className="mt-2.5 flex flex-col gap-1 border-t border-border pt-2">
+            {vols.map((vd) => (
+              <div key={vd} className="flex items-center gap-1.5 text-[0.68rem] text-muted">
+                <Icon.Database className="h-3 w-3 shrink-0 opacity-70" />
+                <span className="truncate font-mono">{vd}</span>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
       <Handle type="source" position={Position.Right} isConnectable={false} className="!h-1 !w-1 !min-w-0 !min-h-0 !border-0 !bg-transparent !opacity-0" />
     </div>
   );
 }
 
-const nodeTypes = { service: ServiceNode };
+// A labeled container box grouping related services on the canvas.
+function GroupNode({ data }) {
+  return (
+    <div className="h-full w-full rounded-2xl border border-border bg-bg-secondary/25">
+      <div className="flex items-center gap-2 px-3.5 py-2.5 text-sm font-semibold">
+        <Icon.Layers className="h-4 w-4 text-accent" /> <span className="truncate">{data.label}</span>
+      </div>
+    </div>
+  );
+}
+
+const nodeTypes = { service: ServiceNode, group: GroupNode };
 
 export function Canvas() {
   const navigate = useNavigate();
@@ -65,6 +123,16 @@ export function Canvas() {
   const ready = useRef(false);
   const posRef = useRef({}); // remember positions across polls / drags
   const [sel, setSel] = useState(null); // { name, kind, project } — open in the side drawer
+  const [syncing, setSyncing] = useState(false);
+
+  const sync = async () => {
+    setSyncing(true);
+    try {
+      const r = await api.syncProject(project);
+      toast(r.syncing?.length ? `syncing ${r.syncing.length} service${r.syncing.length === 1 ? '' : 's'}…` : 'nothing to sync', 'success');
+    } catch (e) { toast(e.message, 'error'); }
+    finally { setSyncing(false); }
+  };
 
   useEffect(() => {
     let live = true;
@@ -74,14 +142,8 @@ export function Canvas() {
       if (!live) return;
       const seed = seedPositions(g.nodes);
       setNodes((prev) => {
-        const prevPos = Object.fromEntries(prev.map((nd) => [nd.id, nd.position]));
-        return g.nodes.map((n) => ({
-          id: n.name,
-          type: 'service',
-          position: prevPos[n.name] || posRef.current[n.name] || seed[n.name],
-          data: { node: n },
-          draggable: true,
-        }));
+        const prevPos = Object.fromEntries(prev.filter((nd) => nd.type === 'service').map((nd) => [nd.id, nd.position]));
+        return buildNodes(g.nodes, prevPos, posRef.current, seed);
       });
       setEdges(g.edges.map((e) => ({
         id: `${e.from}->${e.to}`,
@@ -109,7 +171,8 @@ export function Canvas() {
   }, [sel]);
 
   const onNodeClick = useCallback((_e, node) => {
-    const n = node.data.node;
+    const n = node.data?.node;
+    if (!n) return; // group containers aren't clickable
     setSel({ name: n.name, kind: n.kind === 'postgres' ? 'db' : 'app', project: project || n.project || 'default' });
   }, [project]);
 
@@ -126,11 +189,16 @@ export function Canvas() {
         </Link>
         <span className="rounded-lg border border-border bg-bg-secondary/90 px-2.5 py-1.5 text-sm font-semibold backdrop-blur">{project || 'Canvas'}</span>
       </div>
-      {/* floating add button (top-right) */}
+      {/* floating actions (top-right) */}
       {project && (
-        <button onClick={() => navigate(`/new?project=${project}`)} className="absolute right-4 top-4 z-10 flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] shadow-lg transition hover:brightness-[1.06]">
-          <Icon.Plus className="h-4 w-4" /> Add service
-        </button>
+        <div className="absolute right-4 top-4 z-10 flex items-center gap-2">
+          <button onClick={sync} disabled={syncing} className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-secondary/90 px-3 py-2 text-sm font-medium text-secondary shadow-lg backdrop-blur transition hover:text-primary disabled:opacity-60">
+            <Icon.Rollback className={cx('h-4 w-4', syncing && 'spin')} /> {syncing ? 'Syncing…' : 'Sync'}
+          </button>
+          <button onClick={() => navigate(`/new?project=${project}`)} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] shadow-lg transition hover:brightness-[1.06]">
+            <Icon.Plus className="h-4 w-4" /> Add service
+          </button>
+        </div>
       )}
 
       {!ready.current ? (
