@@ -115,6 +115,14 @@ function GroupNode({ data }) {
 
 const nodeTypes = { service: ServiceNode, group: GroupNode };
 
+function MenuItem({ icon: Ico, children, onClick, danger }) {
+  return (
+    <button onClick={onClick} className={cx('flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-sm transition hover:bg-bg', danger ? 'text-muted hover:text-danger' : 'text-secondary hover:text-primary')}>
+      {Ico && <Ico className="h-4 w-4 shrink-0" />}<span className="truncate">{children}</span>
+    </button>
+  );
+}
+
 export function Canvas() {
   const navigate = useNavigate();
   const { name: project } = useParams(); // set on /projects/:name, undefined on /canvas
@@ -124,6 +132,8 @@ export function Canvas() {
   const posRef = useRef({}); // remember positions across polls / drags
   const [sel, setSel] = useState(null); // { name, kind, project } — open in the side drawer
   const [syncing, setSyncing] = useState(false);
+  const [menu, setMenu] = useState(null); // right-click context menu: { x, y, node } | { x, y, pane:true }
+  const rf = useRef(null); // React Flow instance (for fitView)
 
   const sync = async () => {
     setSyncing(true);
@@ -134,41 +144,62 @@ export function Canvas() {
     finally { setSyncing(false); }
   };
 
+  const refresh = useCallback(() => api.graph(project).then((g) => {
+    const seed = seedPositions(g.nodes);
+    setNodes((prev) => {
+      const prevPos = Object.fromEntries(prev.filter((nd) => nd.type === 'service').map((nd) => [nd.id, nd.position]));
+      return buildNodes(g.nodes, prevPos, posRef.current, seed);
+    });
+    setEdges(g.edges.map((e) => ({
+      id: `${e.from}->${e.to}`, source: e.from, target: e.to,
+      markerEnd: { type: MarkerType.ArrowClosed, color: 'rgb(148 130 90)' },
+      style: { stroke: 'rgb(148 130 90 / 0.55)', strokeWidth: 1.5 },
+    })));
+    ready.current = true;
+  }).catch(() => {}), [project, setNodes, setEdges]);
+
   useEffect(() => {
-    let live = true;
     ready.current = false; posRef.current = {};
     setNodes([]); setEdges([]);
-    const load = () => api.graph(project).then((g) => {
-      if (!live) return;
-      const seed = seedPositions(g.nodes);
-      setNodes((prev) => {
-        const prevPos = Object.fromEntries(prev.filter((nd) => nd.type === 'service').map((nd) => [nd.id, nd.position]));
-        return buildNodes(g.nodes, prevPos, posRef.current, seed);
-      });
-      setEdges(g.edges.map((e) => ({
-        id: `${e.from}->${e.to}`,
-        source: e.from,
-        target: e.to,
-        markerEnd: { type: MarkerType.ArrowClosed, color: 'rgb(148 130 90)' },
-        style: { stroke: 'rgb(148 130 90 / 0.55)', strokeWidth: 1.5 },
-      })));
-      ready.current = true;
-    }).catch(() => {});
-    load();
-    const t = setInterval(load, 4000);
-    return () => { live = false; clearInterval(t); };
-  }, [project, setNodes, setEdges]);
+    refresh();
+    const t = setInterval(refresh, 4000);
+    return () => clearInterval(t);
+  }, [project, refresh, setNodes, setEdges]);
 
   // Persist positions as the user drags so a poll refresh doesn't reset them.
   const onNodeDragStop = useCallback((_e, node) => { posRef.current[node.id] = node.position; }, []);
 
-  // Esc closes the service drawer.
+  // --- right-click context menus ---
+  const onNodeContextMenu = useCallback((e, node) => {
+    e.preventDefault();
+    if (!node.data?.node) return; // group containers have no service actions
+    setMenu({ x: e.clientX, y: e.clientY, node: node.data.node });
+  }, []);
+  const onPaneContextMenu = useCallback((e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, pane: true }); }, []);
+
+  const groupNames = useMemo(() => [...new Set(nodes.map((nd) => nd.data?.node?.group).filter(Boolean))], [nodes]);
+  const openNode = (n) => { setMenu(null); setSel({ name: n.name, kind: n.kind === 'postgres' ? 'db' : 'app', project: project || n.project || 'default' }); };
+  const setGroup = async (n, grp) => {
+    setMenu(null);
+    try { await api.setConfig(n.name, { group: grp || '' }); toast(grp ? `moved to “${grp}”` : 'removed from group', 'success'); refresh(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+  const newGroup = (n) => { const g = window.prompt('New group name:'); if (g && g.trim()) setGroup(n, g.trim()); else setMenu(null); };
+  const deployNode = async (n) => { setMenu(null); try { await api.deploy(n.name); toast(`deploying ${n.name}…`); } catch (e) { toast(e.message, 'error'); } };
+  const deleteNode = async (n) => {
+    setMenu(null);
+    if (!window.confirm(`Delete ${n.name}? This cannot be undone.`)) return;
+    try { n.kind === 'postgres' ? await api.removeResource(n.name) : await api.remove(n.name); toast(`${n.name} removed`, 'success'); refresh(); }
+    catch (e) { toast(e.message, 'error'); }
+  };
+
+  // Esc closes the context menu / service drawer.
   useEffect(() => {
-    if (!sel) return;
-    const onKey = (e) => e.key === 'Escape' && setSel(null);
+    if (!sel && !menu) return;
+    const onKey = (e) => { if (e.key === 'Escape') { setMenu(null); setSel(null); } };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sel]);
+  }, [sel, menu]);
 
   const onNodeClick = useCallback((_e, node) => {
     const n = node.data?.node;
@@ -220,6 +251,9 @@ export function Canvas() {
           onEdgesChange={onEdgesChange}
           onNodeClick={onNodeClick}
           onNodeDragStop={onNodeDragStop}
+          onNodeContextMenu={onNodeContextMenu}
+          onPaneContextMenu={onPaneContextMenu}
+          onInit={(inst) => { rf.current = inst; }}
           fitView
           fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
           minZoom={0.3}
@@ -230,6 +264,35 @@ export function Canvas() {
           <Background variant="dots" gap={22} size={1} color={bg} />
           <Controls showInteractive={false} />
         </ReactFlow>
+      )}
+
+      {/* right-click context menu */}
+      {menu && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setMenu(null)} onContextMenu={(e) => { e.preventDefault(); setMenu(null); }} />
+          <div className="fixed z-50 min-w-[190px] overflow-hidden rounded-xl border border-border bg-bg-secondary py-1 shadow-2xl" style={{ left: Math.min(menu.x, window.innerWidth - 210), top: Math.min(menu.y, window.innerHeight - 300) }}>
+            {menu.pane ? (
+              <>
+                {project && <MenuItem icon={Icon.Plus} onClick={() => { setMenu(null); navigate(`/new?project=${project}`); }}>Add service</MenuItem>}
+                <MenuItem icon={Icon.Canvas} onClick={() => { setMenu(null); rf.current?.fitView({ padding: 0.3, duration: 300 }); }}>Fit view</MenuItem>
+              </>
+            ) : (
+              <>
+                <MenuItem icon={Icon.ExternalLink} onClick={() => openNode(menu.node)}>Open</MenuItem>
+                {menu.node.kind !== 'postgres' && <MenuItem icon={Icon.Zap} onClick={() => deployNode(menu.node)}>Deploy</MenuItem>}
+                <div className="my-1 border-t border-border" />
+                <div className="px-3 py-1 text-[0.62rem] font-medium uppercase tracking-wide text-muted">Move to group</div>
+                {groupNames.filter((g) => g !== menu.node.group).map((g) => (
+                  <MenuItem key={g} icon={Icon.Layers} onClick={() => setGroup(menu.node, g)}>{g}</MenuItem>
+                ))}
+                <MenuItem icon={Icon.Plus} onClick={() => newGroup(menu.node)}>New group…</MenuItem>
+                {menu.node.group && <MenuItem icon={Icon.X} onClick={() => setGroup(menu.node, '')}>Remove from “{menu.node.group}”</MenuItem>}
+                <div className="my-1 border-t border-border" />
+                <MenuItem icon={Icon.Trash} danger onClick={() => deleteNode(menu.node)}>Delete</MenuItem>
+              </>
+            )}
+          </div>
+        </>
       )}
 
       {/* Service drawer — slides in over the canvas, Railway-style. */}
