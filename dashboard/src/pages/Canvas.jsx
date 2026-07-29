@@ -40,7 +40,9 @@ function cardHeight(n) {
 
 // Build React Flow nodes. With no groups → free layout (seed + remembered positions). With groups
 // → deterministic: each group is a container box holding its members flow-stacked; ungrouped go loose.
-const GW = 268, GAP = 44, HEADER = 44, GAP_Y = 20, PAD = 16;
+// SIDE = uniform inset padding; card is 220 wide, so GW = 220 + 2·SIDE. HEADER reserves the title
+// row; GAP_Y between stacked cards and PAD at the bottom both equal SIDE for even breathing room.
+const SIDE = 20, GW = 220 + SIDE * 2, GAP = 48, HEADER = 60, GAP_Y = SIDE, PAD = SIDE;
 function buildNodes(graphNodes, prevPos, remembered, seed) {
   const grouped = graphNodes.some((n) => n.group);
   if (!grouped) {
@@ -111,13 +113,14 @@ function ServiceNode({ data }) {
   );
 }
 
-// A labeled container box grouping related services on the canvas. Kept light (dashed boundary + a
-// faint lift + a small floating label) so it reads as a boundary, not a slab competing with the cards.
+// A labeled container box grouping related services on the canvas — Railway-style: a subtle solid
+// panel with a proper header row (icon + title), and its members inset with even padding all round.
 function GroupNode({ data }) {
   return (
-    <div className="relative h-full w-full rounded-2xl border border-dashed border-border bg-white/[0.02]">
-      <div className="absolute left-3 top-3 flex max-w-[calc(100%-1.5rem)] items-center gap-1.5 rounded-md bg-bg-secondary/80 px-2 py-1 text-[0.68rem] font-medium text-muted backdrop-blur">
-        <Icon.Layers className="h-3 w-3 shrink-0 text-accent/80" /> <span className="truncate">{data.label}</span>
+    <div className="h-full w-full rounded-2xl border border-border bg-white/[0.02]">
+      <div className="flex items-center gap-2.5 px-5 pt-4">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-bg text-accent"><Icon.Layers className="h-3.5 w-3.5" /></span>
+        <span className="truncate text-sm font-semibold">{data.label}</span>
       </div>
     </div>
   );
