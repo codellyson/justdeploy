@@ -113,5 +113,5 @@ html:not(.dark) { --jd-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 10px 30px rgb(0 0 
 .react-flow__controls-button svg, .react-flow__controls-button svg path { fill: currentColor !important; }
 .react-flow__node:focus, .react-flow__node:focus-visible { outline: none; }
 .react-flow__handle { border: none; }
-/* Group nodes: kill React Flow's default light-grey slab so our own dashed container shows through. */
-.react-flow__node-group { background: transparent !important; border: none !important; box-shadow: none !important; }
+/* Group nodes: kill React Flow's default light-grey slab + dark (#222) text so our own container shows. */
+.react-flow__node-group { background: transparent !important; border: none !important; box-shadow: none !important; color: rgb(var(--text-primary)); }

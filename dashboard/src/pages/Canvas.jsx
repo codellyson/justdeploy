@@ -119,8 +119,8 @@ function GroupNode({ data }) {
   return (
     <div className="h-full w-full rounded-2xl border border-border bg-white/[0.02]">
       <div className="flex items-center gap-2.5 px-5 pt-4">
-        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-bg text-accent"><Icon.Layers className="h-3.5 w-3.5" /></span>
-        <span className="truncate text-sm font-semibold">{data.label}</span>
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-bg-secondary text-accent"><Icon.Layers className="h-4 w-4" /></span>
+        <span className="truncate text-sm font-semibold text-primary">{data.label}</span>
       </div>
     </div>
   );
