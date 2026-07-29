@@ -172,15 +172,14 @@ export function Canvas() {
   // --- right-click context menus ---
   const onNodeContextMenu = useCallback((e, node) => {
     e.preventDefault();
-    e.stopPropagation();
-    e.nativeEvent?.stopImmediatePropagation?.(); // pane handler is a native listener — stop it too
-    if (!node.data?.node) return; // group containers have no service actions
+    if (!node.data?.node) { setMenu(null); return; } // group containers have no service actions
     setMenu({ x: e.clientX, y: e.clientY, node: node.data.node });
   }, []);
   const onPaneContextMenu = useCallback((e) => {
     e.preventDefault();
-    // Only the bare pane — ignore bubbled events that started on a node.
-    if (e.target && !e.target.classList?.contains('react-flow__pane')) return;
+    // React Flow bubbles a node's contextmenu event to the pane too; if the event started inside a
+    // node, let the node menu stand instead of clobbering it with the pane menu.
+    if (e.target?.closest?.('.react-flow__node')) return;
     setMenu({ x: e.clientX, y: e.clientY, pane: true });
   }, []);
 
