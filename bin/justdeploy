@@ -107,13 +107,17 @@ async function cmdAdd(a) {
   // Infer the type from the repo when not given — the same package.json detection the dashboard
   // uses (Next/Adonis/Vite/CRA/static). Reads via the GitHub API, so it needs a GitHub URL.
   let type = a.type;
+  let detectedSubdir = null;
   if (!type) {
     const full = githubFullName(repo);
     if (!full) die('could not infer --type (not a GitHub URL) — pass --type');
     try {
       const det = await github.detectType(await github.activeToken(database, 'admin'), full);
+      if (!det.type) die(`could not detect --type: ${det.reason}. Pass --type explicitly.`);
       type = det.type;
-      console.log(`detected ${type} (${det.reason})`);
+      detectedSubdir = det.subdir || null;
+      console.log(`detected ${type}${det.subdir ? ` in ${det.subdir}/` : ''} (${det.reason})`);
+      for (const c of det.candidates || []) console.log(`  also possible: ${c.type} in ${c.subdir || '.'}/ — ${c.reason}`);
     } catch (e) { die(`could not detect --type (${e.message}) — pass --type`); }
   }
   if (!TYPES.includes(type)) die(`--type must be one of: ${TYPES.join(', ')}`);
@@ -137,7 +141,7 @@ async function cmdAdd(a) {
   if (serve === 'cron') { try { cron.validateSchedule(schedule); } catch (e) { die(e.message); } }
   // --subdir (alias --root) is the repo folder to build/serve from (monorepos). normSubdir throws
   // on traversal, so a bad value fails here rather than mid-build.
-  const subdir = normSubdir(a.subdir ?? a.root) || null;
+  const subdir = normSubdir(a.subdir ?? a.root ?? detectedSubdir) || null;
   db.upsertApp(database, {
     name, type, domain, repo, serve,
     // The type carries its own release command (Adonis → migrations); --release overrides it.

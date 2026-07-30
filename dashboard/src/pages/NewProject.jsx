@@ -62,8 +62,13 @@ export function NewProject() {
   // On picking a repo, detect its framework and match the right type to it.
   const onPickRepo = async (repo) => {
     setDetected(null);
-    try { const d = await api.githubDetect(repo.full_name); if (d.type) { setType(d.type); setDetected(d); } }
-    catch { /* leave the current type */ }
+    try {
+      const d = await api.githubDetect(repo.full_name);
+      setDetected(d);
+      if (d.type) setType(d.type);
+      // The app is often in a subfolder; carry that through so the user doesn't have to find it.
+      if (d.subdir && !touched.subdir) setF((s) => ({ ...s, subdir: d.subdir }));
+    } catch { /* leave the current type */ }
   };
 
   const submit = async () => {
@@ -107,9 +112,28 @@ export function NewProject() {
           </button>
         ))}
       </div>
-      {detected?.type && (
-        <div className="-mt-6 mb-8 flex items-center gap-1.5 text-xs text-accent">
-          <Icon.Check className="h-3.5 w-3.5" /> Auto-detected <b className="font-semibold">{typeLabel(detected.type)}</b> from your repo — {detected.reason}
+      {detected && (
+        <div className="-mt-6 mb-8 flex flex-col gap-1">
+          {detected.type ? (
+            <span className="flex items-start gap-1.5 text-xs text-accent">
+              <Icon.Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>Auto-detected <b className="font-semibold">{typeLabel(detected.type)}</b>
+                {detected.subdir && <> in <b className="font-semibold">{detected.subdir}/</b></>} — {detected.reason}
+                {detected.confidence === 'medium' || detected.confidence === 'low' ? ' (a guess — check it)' : ''}
+              </span>
+            </span>
+          ) : (
+            <span className="flex items-start gap-1.5 text-xs text-warning">
+              <Icon.Alert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>Couldn't tell what this repo is — {detected.reason}. Pick a type yourself.</span>
+            </span>
+          )}
+          {(detected.candidates || []).slice(0, 3).map((c) => (
+            <button key={c.subdir} onClick={() => { setType(c.type); setF((s) => ({ ...s, subdir: c.subdir })); setTouched((t) => ({ ...t, subdir: true })); }}
+              className="w-fit text-xs text-muted underline decoration-dotted transition hover:text-secondary">
+              or {typeLabel(c.type)} in {c.subdir || '.'}/ — {c.reason}
+            </button>
+          ))}
         </div>
       )}
 
@@ -170,7 +194,7 @@ export function NewProject() {
               )}
               <div className="flex flex-col gap-1.5">
                 <label className="label-tiny">Root directory <span className="font-normal normal-case tracking-normal text-muted/70">— optional; the repo subfolder to build from (monorepos)</span></label>
-                <input value={f.subdir || ''} onChange={set('subdir')} placeholder="e.g. server" className="field font-mono text-[0.8rem]" />
+                <input value={f.subdir || ''} onChange={(e) => { setTouched((t) => ({ ...t, subdir: true })); setF((s) => ({ ...s, subdir: e.target.value })); }} placeholder="e.g. server" className="field font-mono text-[0.8rem]" />
               </div>
             </>
           )}

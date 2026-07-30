@@ -43,22 +43,144 @@ export async function listRepos(token) {
   return out;
 }
 
-// Detect the app type from a repo's package.json so the right build config is matched to it
-// (rather than the user guessing). Returns { type, reason }.
-export async function detectType(token, fullName) {
-  const r = await fetch(`${API}/repos/${fullName}/contents/package.json`, { headers: headers(token) });
-  if (r.status === 404) return { type: 'static', reason: 'no package.json — served as a static site' };
+// --- type detection --------------------------------------------------------
+// Detect what a repo is so the right config is matched to it rather than guessed at. This looks at
+// the whole tree, not just the root: a repo's deployable app is very often in a subfolder
+// (ingest/, server/, apps/web), and a root-only reading of such a repo is always wrong.
+//
+// Two rules learned the hard way:
+//   * `static` is never a fallback. It used to be what every unrecognised repo became, which is how
+//     a Cloudflare Worker got deployed as a static site — Caddy happily serves a directory that has
+//     no index.html, so the failure is silent instead of loud. It now needs positive evidence.
+//   * When nothing matches, say so (type: null) and let the user choose. A wrong guess that half
+//     works costs more than an honest "I don't know".
+
+const HTTP_DEPS = ['express', 'fastify', 'koa', 'hono', 'h3', '@hapi/hapi', 'restify', 'polka', 'micro', '@nestjs/core'];
+const WORKERISH_DEPS = ['bullmq', 'bee-queue', 'bull', 'agenda', 'discord.js', 'telegraf', 'node-telegram-bot-api', 'amqplib', 'kafkajs', 'ioredis-stream', '@slack/bolt'];
+
+const dirOf = (path) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
+
+// One recursive tree read gives the whole layout — cheaper than probing paths one at a time.
+async function repoTree(token, fullName) {
+  const meta = await fetch(`${API}/repos/${fullName}`, { headers: headers(token) });
+  if (!meta.ok) throw new Error(`GitHub error (${meta.status})`);
+  const branch = (await meta.json()).default_branch || 'main';
+  const r = await fetch(`${API}/repos/${fullName}/git/trees/${encodeURIComponent(branch)}?recursive=1`, { headers: headers(token) });
   if (!r.ok) throw new Error(`GitHub error (${r.status})`);
-  let pkg;
-  try { pkg = JSON.parse(Buffer.from((await r.json()).content, 'base64').toString('utf8')); }
-  catch { return { type: 'static', reason: 'unreadable package.json' }; }
+  const body = await r.json();
+  return { files: (body.tree || []).filter((n) => n.type === 'blob').map((n) => n.path), truncated: !!body.truncated };
+}
+
+async function readJson(token, fullName, path) {
+  const r = await fetch(`${API}/repos/${fullName}/contents/${path}`, { headers: headers(token) });
+  if (!r.ok) return null;
+  try { return JSON.parse(Buffer.from((await r.json()).content, 'base64').toString('utf8')); }
+  catch { return null; }
+}
+
+// Classify one candidate directory. `has(f)` tests for a file inside that directory.
+function classify(pkg, has, subdir) {
+  const where = subdir ? ` in ${subdir}/` : '';
+  // A Cloudflare Worker is not deployable here at all — naming it beats mislabelling it.
+  if (has('wrangler.toml') || has('wrangler.jsonc') || has('wrangler.json')) {
+    return { type: null, confidence: 'certain', reason: `this is a Cloudflare Worker${where} (wrangler config) — deploy it with wrangler, not JustDeploy` };
+  }
+  if (!pkg) {
+    if (has('hugo.toml') || has('config.toml') && has('content')) {
+      return { type: null, confidence: 'certain', reason: `Hugo site${where} — JustDeploy has no Hugo type; it needs a build step, so serving the repo root would 404` };
+    }
+    if (has('index.html')) return { type: 'static', confidence: 'high', reason: `index.html${where} with no build step — served as a static site` };
+    return { type: null, confidence: 'low', reason: `nothing recognisable${where} — no package.json and no index.html` };
+  }
+
   const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-  if (deps.next) return { type: 'nextjs', reason: 'Next.js detected' };
-  if (deps['@adonisjs/core']) return { type: 'adonis', reason: 'AdonisJS detected' };
-  if (deps.vite || deps['@vitejs/plugin-react'] || deps['@vitejs/plugin-vue']) return { type: 'vite', reason: 'Vite detected' };
-  if (deps['react-scripts']) return { type: 'react', reason: 'Create React App detected' };
-  if (pkg.scripts && pkg.scripts.build) return { type: 'vite', reason: 'build script found — building to dist/' };
-  return { type: 'static', reason: 'no build step — served as a static site' };
+  const scripts = pkg.scripts || {};
+  const dep = (names) => names.find((n) => deps[n]);
+
+  if (deps.next) return { type: 'nextjs', confidence: 'certain', reason: `Next.js detected${where}` };
+  if (deps['@adonisjs/core']) return { type: 'adonis', confidence: 'certain', reason: `AdonisJS detected${where}` };
+  if (deps['react-scripts']) return { type: 'react', confidence: 'certain', reason: `Create React App detected${where}` };
+  // Vite builds a static bundle — unless it's also running a server, in which case it's an app.
+  if (deps.vite || deps['@vitejs/plugin-react'] || deps['@vitejs/plugin-vue']) {
+    const server = dep(HTTP_DEPS);
+    if (server) return { type: 'app', confidence: 'medium', reason: `Vite + ${server}${where} — a server, not a static bundle` };
+    return { type: 'vite', confidence: 'certain', reason: `Vite detected${where}` };
+  }
+
+  // A `start` script means something long-running. What kind depends on what it pulls in.
+  if (scripts.start) {
+    const server = dep(HTTP_DEPS);
+    if (server) return { type: 'app', confidence: 'high', reason: `start script + ${server}${where} — an HTTP service` };
+    const workerish = dep(WORKERISH_DEPS);
+    if (workerish) return { type: 'worker', confidence: 'high', reason: `start script + ${workerish}${where} — a long-running process that serves no HTTP` };
+    // node:http has no dependency to find, so fall back to the safe assumption: it listens.
+    return { type: 'app', confidence: 'medium', reason: `start script${where} (\`${String(scripts.start).slice(0, 40)}\`) — assumed to listen on $PORT` };
+  }
+
+  // No start script, but an executable entry: a CLI/batch tool, which is a scheduled job here.
+  if (pkg.bin) return { type: 'cron', confidence: 'medium', reason: `a CLI${where} (bin, no start script) — runs and exits, so it belongs on a schedule` };
+
+  if (scripts.build) {
+    if (has('index.html')) return { type: 'vite', confidence: 'medium', reason: `build script + index.html${where} — a static bundle` };
+    return { type: null, confidence: 'low', reason: `build script${where} but no index.html and no start script — can't tell what it produces` };
+  }
+  if (has('index.html')) return { type: 'static', confidence: 'medium', reason: `index.html${where} — served as a static site` };
+  return { type: null, confidence: 'low', reason: `package.json${where} with no start, build, or bin — nothing to run` };
+}
+
+const RANK = { certain: 3, high: 2, medium: 1, low: 0 };
+
+// Returns { type, subdir, reason, confidence, candidates } — `subdir` is the folder the app lives
+// in ('' for the repo root), ready to pass straight through as the root directory.
+export async function detectType(token, fullName) {
+  let tree;
+  try { tree = await repoTree(token, fullName); }
+  catch { tree = null; }
+
+  // Fall back to a root-only read if the tree is unavailable or too big to trust.
+  if (!tree || tree.truncated) {
+    const pkg = await readJson(token, fullName, 'package.json');
+    const one = classify(pkg, () => false, '');
+    return { ...one, subdir: '', candidates: [] };
+  }
+
+  const { files } = tree;
+  const fileSet = new Set(files);
+  // Candidate roots: the repo root, plus any directory (two levels deep at most) holding a
+  // package.json — that covers ingest/, server/, apps/web, packages/api.
+  const dirs = new Set(['']);
+  for (const f of files) {
+    if (!/(^|\/)package\.json$/.test(f)) continue;
+    const d = dirOf(f);
+    if (d.split('/').length <= 2) dirs.add(d);
+  }
+  // Directories that only hold static files still count (a docs/ folder with an index.html).
+  for (const f of files) {
+    if (!/(^|\/)index\.html$/.test(f)) continue;
+    const d = dirOf(f);
+    if (d.split('/').length <= 2) dirs.add(d);
+  }
+
+  const candidates = [];
+  for (const d of [...dirs].slice(0, 8)) {
+    const prefix = d ? `${d}/` : '';
+    const has = (f) => fileSet.has(`${prefix}${f}`) || files.some((p) => p.startsWith(`${prefix}${f}/`));
+    const pkg = fileSet.has(`${prefix}package.json`) ? await readJson(token, fullName, `${prefix}package.json`) : null;
+    const c = classify(pkg, has, d);
+    candidates.push({ ...c, subdir: d });
+  }
+
+  // Prefer the most confident deployable candidate; the repo root wins ties so a single-app repo
+  // never gets pushed into a subfolder.
+  const usable = candidates.filter((c) => c.type);
+  usable.sort((a, b) => (RANK[b.confidence] - RANK[a.confidence]) || (a.subdir.length - b.subdir.length));
+  const best = usable[0];
+  if (!best) {
+    // Nothing deployable — surface the most specific explanation we have (e.g. "it's a Worker").
+    const explained = candidates.sort((a, b) => RANK[b.confidence] - RANK[a.confidence])[0];
+    return { type: null, subdir: '', confidence: 'low', reason: explained?.reason || 'could not tell what this repo is', candidates };
+  }
+  return { ...best, candidates: usable.filter((c) => c !== best) };
 }
 
 // Per-invocation git config that authenticates HTTPS clones/fetches to github.com WITHOUT
