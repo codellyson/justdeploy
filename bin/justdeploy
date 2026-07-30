@@ -377,7 +377,9 @@ function cmdSchedule() {
   if (!jobs.length) return console.log('no scheduled jobs — add one with: justdeploy add <repo> --type cron --schedule daily --cmd "npm run ingest"');
   for (const j of jobs) {
     const s = cron.status(j.name);
-    const last = s.lastExit === null ? 'never run' : s.lastExit === 0 ? 'last run ok' : `last run FAILED (exit ${s.lastExit})`;
+    const last = s.lastExit === null ? 'never run'
+      : s.lastExit === 0 ? `last run ok${s.lastRunAt ? ` (${s.lastRunAt})` : ''}`
+      : `last run FAILED (exit ${s.lastExit})${s.lastRunAt ? ` at ${s.lastRunAt}` : ''}`;
     console.log(`${j.name.padEnd(20)} ${(j.schedule || '?').padEnd(22)} ${(s.scheduled ? 'armed' : 'NOT ARMED').padEnd(10)} ${last}`);
     if (s.next) console.log(`${''.padEnd(20)} next: ${s.next}`);
     if (j.cmd) console.log(`${''.padEnd(20)} cmd:  ${j.cmd}`);

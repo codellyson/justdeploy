@@ -41,11 +41,19 @@ export function nextRun(app) {
 
 export function status(app) {
   const active = spawnSync('systemctl', ['is-active', `${unitName(app)}.timer`], { encoding: 'utf8' });
-  const last = spawnSync('systemctl', ['show', `${unitName(app)}.service`, '-p', 'ExecMainStatus', '--value'], { encoding: 'utf8' });
-  const code = Number((last.stdout || '').trim());
+  const show = spawnSync('systemctl', ['show', `${unitName(app)}.service`, '-p', 'ExecMainStatus', '-p', 'ExecMainStartTimestamp'], { encoding: 'utf8' });
+  const props = Object.fromEntries((show.stdout || '').trim().split('\n').map((l) => {
+    const i = l.indexOf('=');
+    return i === -1 ? [l, ''] : [l.slice(0, i), l.slice(i + 1)];
+  }));
+  // A unit that has never started still reports ExecMainStatus=0, which would read as "last run
+  // ok". The start timestamp is the only thing that distinguishes never-run from succeeded.
+  const ran = Boolean(props.ExecMainStartTimestamp);
+  const code = Number(props.ExecMainStatus);
   return {
     scheduled: (active.stdout || '').trim() === 'active',
-    lastExit: Number.isFinite(code) ? code : null,
+    lastExit: ran && Number.isFinite(code) ? code : null,
+    lastRunAt: props.ExecMainStartTimestamp || null,
     next: nextRun(app),
   };
 }
