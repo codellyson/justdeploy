@@ -134,6 +134,17 @@ export function pruneImages(app, keepSha, keepCount = 3) {
   docker(['image', 'prune', '-f']);
 }
 
+// Every image ever built for an app, gone. For teardown only: once the app row is deleted there is
+// nothing left that could roll back to one, so they are unreachable weight (~1 GB each) — and they
+// are rebuildable from git, so nothing irreplaceable is lost. Returns how many tags were removed.
+export function removeImages(app) {
+  const r = docker(['images', `justdeploy/${app}`, '--format', '{{.Tag}}']);
+  if (r.status !== 0) return 0;
+  const tags = r.stdout.split('\n').map((s) => s.trim()).filter(Boolean);
+  for (const t of tags) docker(['rmi', '-f', `justdeploy/${app}:${t}`]);
+  return tags.length;
+}
+
 // Cap the BuildKit build cache so it can't grow without bound (keeps recent layers for fast
 // rebuilds). Best-effort — a missing/older buildctl just no-ops.
 export function pruneBuildCache(keepMB = 3000) {

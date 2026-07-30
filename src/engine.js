@@ -457,6 +457,9 @@ export async function destroy(database, name, { keepData = false } = {}) {
     container.stop(app.container);
     container.pruneExcept(name, null); // remove any lingering jd-<app>-* containers
   }
+  // The app row is going away, so no rollback can reach its images any more — reclaim them.
+  // Without this every deleted container/worker/cron app leaked ~1 GB per release it ever built.
+  if (isContainerized(app.serve)) container.removeImages(name);
   db.removeApp(database, name);
   await caddy.applyFromDb(database);
 

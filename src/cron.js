@@ -127,6 +127,9 @@ export function runNow(app) {
 
 export function remove(app) {
   try { execSync(`systemctl disable --now ${unitName(app)}.timer`, { stdio: 'ignore' }); } catch { /* not installed */ }
+  // Disabling the timer does not touch a run already in progress — stop that too, or a job can
+  // outlive the service it belongs to (and hold a lock on the image we are about to delete).
+  try { execSync(`systemctl stop ${unitName(app)}.service`, { stdio: 'ignore' }); } catch { /* not running */ }
   for (const f of [servicePath(app), timerPath(app), cronEnvFile(app)]) {
     try { if (existsSync(f)) unlinkSync(f); } catch { /* ignore */ }
   }
