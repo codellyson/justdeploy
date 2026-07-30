@@ -7,9 +7,11 @@ import { TypeIcon, Icon } from '../components/icons';
 import { GithubSource } from '../components/GithubSource';
 import { cx, typeLabel, slug, suggestName, nameFromRepo, releaseHint, persistHint } from '../lib/format';
 
-const TYPES = ['react', 'vite', 'static', 'adonis', 'nextjs', 'app', 'postgres'];
-const CONTAINER = ['adonis', 'nextjs', 'app']; // Railpack-built; take a release cmd + persist dirs
-const needsRepoDomain = (t) => t && t !== 'postgres';
+const TYPES = ['react', 'vite', 'static', 'adonis', 'nextjs', 'app', 'worker', 'postgres'];
+const CONTAINER = ['adonis', 'nextjs', 'app', 'worker']; // Railpack-built; take a release cmd + persist dirs
+const needsRepo = (t) => t && t !== 'postgres';
+// A worker serves no traffic, so it gets a repo but no domain field.
+const needsDomain = (t) => needsRepo(t) && t !== 'worker';
 
 function StepDot({ n, active }) {
   return (
@@ -68,7 +70,8 @@ export function NewProject() {
     try {
       const proj = (f.project ?? presetProject).trim();
       const body = { type, name: (f.name || '').trim(), project: proj };
-      if (needsRepoDomain(type)) { body.repo = (f.repo || '').trim(); body.domain = (f.domain || '').trim(); body.subdir = (f.subdir || '').trim(); }
+      if (needsRepo(type)) { body.repo = (f.repo || '').trim(); body.subdir = (f.subdir || '').trim(); }
+      if (needsDomain(type)) body.domain = (f.domain || '').trim();
       if (CONTAINER.includes(type)) { body.release = (f.release || '').trim(); body.persist = (f.persist || '').trim(); }
       const back = proj && proj !== 'default' ? `/projects/${proj}` : '/';
       const r = await api.createApp(body);
@@ -80,7 +83,7 @@ export function NewProject() {
     } catch (e) { setErr(e.message); setBusy(false); }
   };
 
-  const cta = needsRepoDomain(type) ? `Deploy ${type ? typeLabel(type) : ''}` : `Create ${type ? typeLabel(type) : ''}`;
+  const cta = needsRepo(type) ? `Deploy ${type ? typeLabel(type) : ''}` : `Create ${type ? typeLabel(type) : ''}`;
 
   return (
     <div className="animate-rise mx-auto max-w-[760px]">
@@ -123,18 +126,27 @@ export function NewProject() {
             </div>
           </div>
 
-          {needsRepoDomain(type) && (
+          {needsRepo(type) && (
             <>
               <GithubSource value={f.repo || ''} onRepo={setRepo} onPick={onPickRepo} />
-              <div className="flex flex-col gap-1.5">
-                <label className="label-tiny">Domain <span className="font-normal normal-case tracking-normal text-muted/70">— auto-generated, edit if you like</span></label>
-                <input value={f.domain || ''} onChange={onDomain} placeholder="app.example.com" className="field font-mono text-[0.8rem]" />
-              </div>
-              {f.domain && (
-                <div className="flex items-center gap-2 rounded-xl border border-border bg-bg px-3 py-2.5">
-                  <Icon.Globe className="h-4 w-4 shrink-0 text-muted" />
-                  <span className="text-xs text-muted">Will be live at</span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-sm text-accent">{f.domain}</span>
+              {needsDomain(type) ? (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="label-tiny">Domain <span className="font-normal normal-case tracking-normal text-muted/70">— auto-generated, edit if you like</span></label>
+                    <input value={f.domain || ''} onChange={onDomain} placeholder="app.example.com" className="field font-mono text-[0.8rem]" />
+                  </div>
+                  {f.domain && (
+                    <div className="flex items-center gap-2 rounded-xl border border-border bg-bg px-3 py-2.5">
+                      <Icon.Globe className="h-4 w-4 shrink-0 text-muted" />
+                      <span className="text-xs text-muted">Will be live at</span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-sm text-accent">{f.domain}</span>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="flex items-start gap-2 rounded-xl border border-border bg-bg px-3 py-2.5">
+                  <Icon.Terminal className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
+                  <span className="text-xs text-muted">No domain or port — a worker just runs. It's healthy when it stays up, and you watch it in Logs.</span>
                 </div>
               )}
               <div className="flex flex-col gap-1.5">

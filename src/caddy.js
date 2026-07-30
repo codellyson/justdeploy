@@ -41,7 +41,7 @@ export function generate(apps, dashboard) {
         `}`,
       );
     }
-    // resource types (postgres) never touch Caddy.
+    // resource (postgres) and worker types never touch Caddy — they serve no HTTP.
   }
   return blocks.join('\n\n') + '\n';
 }

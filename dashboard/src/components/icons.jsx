@@ -6,6 +6,7 @@ import {
   LuGlobe, LuGitCommitHorizontal, LuGitBranch, LuClock, LuActivity, LuServer,
   LuLock, LuEye, LuEyeOff, LuTriangleAlert, LuZap, LuRocket, LuLayers, LuSettings2,
   LuSearch, LuList, LuBraces, LuChevronDown, LuLink, LuDownload, LuArrowDown, LuWrapText, LuWorkflow,
+  LuCog,
 } from 'react-icons/lu';
 import { SiReact, SiVite, SiNextdotjs, SiAdonisjs, SiPostgresql, SiGithub } from 'react-icons/si';
 
@@ -58,6 +59,7 @@ const TYPE_ICON = {
   adonis: SiAdonisjs,
   nextjs: SiNextdotjs,
   app: LuServer,
+  worker: LuCog,
   postgres: SiPostgresql,
 };
 

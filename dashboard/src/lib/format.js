@@ -34,6 +34,7 @@ export const TYPE_LABEL = {
   adonis: 'AdonisJS',
   nextjs: 'Next.js',
   app: 'Container',
+  worker: 'Worker',
   postgres: 'Postgres',
 };
 export const typeLabel = (t) => TYPE_LABEL[t] || t;
@@ -42,7 +43,7 @@ export const typeLabel = (t) => TYPE_LABEL[t] || t;
 // Next.js app never shows an Adonis `node ace` command as its example. These are hints only;
 // the actual Adonis release preset (a real value) comes from the type table via the API.
 const RELEASE_HINT = { adonis: 'node ace migration:run --force', nextjs: 'npx prisma migrate deploy' };
-const PERSIST_HINT = { adonis: 'tmp', nextjs: 'uploads' };
+const PERSIST_HINT = { adonis: 'tmp', nextjs: 'uploads', worker: 'data' };
 export const releaseHint = (type) => RELEASE_HINT[type] || 'a command to run before the server starts';
 export const persistHint = (type) => PERSIST_HINT[type] || 'tmp';
 
@@ -53,5 +54,8 @@ export function appHealth(app) {
   if (!d) return 'idle';
   if (d.status === 'failed') return 'failed';
   if (d.status === 'running') return 'running';
+  // A worker deploying successfully doesn't mean it's still alive — nothing probes it afterwards,
+  // so its container being down is the only way we learn it died. Absent for other serve models.
+  if (app.running === false) return 'failed';
   return 'ok';
 }

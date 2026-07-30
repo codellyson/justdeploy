@@ -1,7 +1,7 @@
 // The framework table — the ONE thing that varies between app types.
 // Adding a framework later is appending a row here, not writing new logic.
 //
-//   serve:   'static' | 'proxy' | 'resource'
+//   serve:   'static' | 'proxy' | 'container' | 'worker' | 'resource'
 //   build:   shell string run in the repo dir (null = no build step)
 //   artifact: for static, the folder to serve, relative to the repo
 //   cwd:     for proxy, the dir to launch from, relative to the repo
@@ -69,6 +69,12 @@ export const TABLE = {
   app: {
     serve: 'container',
   },
+  // Anything that runs but never serves HTTP: bots, queue consumers, schedulers, scrapers.
+  // Built by Railpack exactly like `app`, but with no port published, no domain, no Caddy route
+  // and no HTTP health check — a worker is healthy when it stays up (see engine's settle window).
+  worker: {
+    serve: 'worker',
+  },
   postgres: {
     serve: 'resource',
   },
@@ -94,6 +100,10 @@ export function autoEnv(type, port) {
     case 'app':
       // Generic container app — the near-universal convention is to listen on $PORT.
       return { PORT: String(port), NODE_ENV: 'production' };
+    case 'worker':
+      // Deliberately no PORT: nothing is published, so a port would only tempt the app to bind
+      // one that no one can reach.
+      return { NODE_ENV: 'production' };
     default:
       return {};
   }

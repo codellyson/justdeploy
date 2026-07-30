@@ -3,8 +3,8 @@
 // deploy. This module just parses/validates the small yaml subset when one is provided.
 //
 //   name: gobi-design
-//   type: vite            # react | vite | static | adonis | nextjs
-//   domain: gobi.design
+//   type: vite            # react | vite | static | adonis | nextjs | app | worker
+//   domain: gobi.design   # not needed for `worker` (or postgres) — they serve no traffic
 //   postgres: gobi-db     # optional: names a provisioned db resource to wire in
 //   health:               # optional, proxy types only
 //     path: /health
@@ -13,7 +13,7 @@
 // A deliberately tiny YAML subset: flat key: value pairs plus one nested block (`health`).
 // We do not pull in a YAML dependency for four keys.
 import { readFileSync } from 'node:fs';
-import { TYPES } from './table.js';
+import { TABLE, TYPES } from './table.js';
 
 function scalar(raw) {
   let v = raw.trim();
@@ -64,8 +64,9 @@ export function validate(cfg) {
   if (!TYPES.includes(cfg.type)) {
     errs.push(`type must be one of: ${TYPES.join(', ')}`);
   }
-  const serveNeedsDomain = cfg.type !== 'postgres';
-  if (serveNeedsDomain && !cfg.domain) {
+  // Only types that answer HTTP need a domain — a resource (postgres) and a worker serve no traffic.
+  const serve = TABLE[cfg.type]?.serve;
+  if (serve && serve !== 'resource' && serve !== 'worker' && !cfg.domain) {
     errs.push('domain is required for deployable types');
   }
   if (errs.length) throw new Error(`invalid config:\n  - ${errs.join('\n  - ')}`);

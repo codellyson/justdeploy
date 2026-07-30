@@ -193,6 +193,7 @@ function OverviewTab({ app, onLogs, onDeploys }) {
             {d?.at && <div className="flex flex-col gap-1.5"><span className="label-tiny">Last deploy</span><span className="text-sm">{timeAgo(d.at)}</span></div>}
             {app.serve === 'proxy' && <div className="flex flex-col gap-1.5"><span className="label-tiny">Port</span><Mono className="text-sm">:{app.live_port ?? '—'}</Mono></div>}
             {app.serve === 'proxy' && <div className="flex flex-col gap-1.5"><span className="label-tiny">PID</span><Mono className="text-sm">{app.live_pid ?? '—'}</Mono></div>}
+            {app.serve === 'worker' && <div className="flex flex-col gap-1.5"><span className="label-tiny">Process</span><span className="text-sm font-medium">{app.running ? 'Running' : 'Stopped'}</span></div>}
           </div>
           {(d?.sha || app.repo) && (
             <div className="flex flex-col gap-1.5">

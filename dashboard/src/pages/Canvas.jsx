@@ -15,8 +15,9 @@ function svcStatus(n) {
   if (n.kind !== 'app') return { text: 'Database', tone: 'text-muted', dot: 'bg-accent' };
   if (n.deploying) return { text: 'Deploying…', tone: 'text-secondary', dot: 'bg-warning' };
   const h = appHealth(n);
-  if (h === 'ok' || h === 'running') return { text: 'Service is online', tone: 'text-secondary', dot: 'bg-success' };
-  if (h === 'failed') return { text: 'Service is offline', tone: 'text-muted', dot: 'bg-danger' };
+  const worker = n.serve === 'worker'; // no URL to be "online" at — it either runs or it doesn't
+  if (h === 'ok' || h === 'running') return { text: worker ? 'Worker is running' : 'Service is online', tone: 'text-secondary', dot: 'bg-success' };
+  if (h === 'failed') return { text: worker ? 'Worker is stopped' : 'Service is offline', tone: 'text-muted', dot: 'bg-danger' };
   return { text: 'Not deployed', tone: 'text-muted', dot: 'bg-muted' };
 }
 

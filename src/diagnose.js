@@ -56,6 +56,23 @@ const RULES = [
     hint: 'Let JustDeploy assign the port — the app must read PORT from env and not hardcode a listen port.',
   },
   {
+    match: /release command failed \(exit \d+\)/i,
+    // Reached only when the command's own output matched no more-specific rule above.
+    reason: 'The release command failed, so the deploy stopped before starting the new version',
+    hint: 'Open Logs — the command ran against the freshly built image and its output is at the end of the build log. The previous version is still running.',
+  },
+  {
+    match: /worker exited immediately \(code 0\)/i,
+    reason: 'The worker ran and exited straight away instead of staying up',
+    hint: 'A worker is a long-running process (a bot, consumer, or scheduler). If this is a one-shot script it needs a loop or a subscription to keep the process alive — or it belongs in a release command, not a worker service.',
+  },
+  {
+    match: /worker (?:exited with code|crashed and restarted)/i,
+    // Reached only when the salvaged container output matched no more-specific rule above.
+    reason: 'The worker crashed on boot instead of staying up',
+    hint: 'Open Logs for the stack trace — the container output is captured there. Common causes: missing env vars, a database it cannot reach, or a start command that is not the worker entrypoint.',
+  },
+  {
     match: /health check failed on port/i,
     // Reached only when the log tail matched no more-specific rule above.
     reason: 'The app started but never answered a healthy HTTP response',

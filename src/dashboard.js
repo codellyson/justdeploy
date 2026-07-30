@@ -10,6 +10,7 @@ import * as db from './db.js';
 import * as engine from './engine.js';
 import * as caddy from './caddy.js';
 import * as proc from './proc.js';
+import * as container from './container.js';
 import * as pg from './postgres.js';
 import * as firewall from './firewall.js';
 import * as auth from './auth.js';
@@ -239,6 +240,9 @@ function appView(database, a) {
     name: a.name, type: a.type, serve: a.serve, domain: a.domain, owner: a.owner, group: a.grp,
     repo: a.repo, live_port: a.live_port, live_pid: a.live_pid,
     release_cmd: a.release_cmd, persist: a.persist,
+    // A worker has no URL to click and no port to read, so whether its container is up is the
+    // only live signal the UI can show. Other serve models don't pay for the docker inspect.
+    running: a.serve === 'worker' ? container.running(a.container) : undefined,
     rollbackTo: db.rollbackTarget(database, a.name),
     releases: engine.listReleases(a.name),      // SHAs with a kept build → instant rollback
     currentSha: engine.currentRelease(a.name),
@@ -310,7 +314,7 @@ function streamDockerLogs(req, res, container) {
 function logSource(database, name, kind) {
   const app = db.getApp(database, name);
   if (kind === 'runtime') {
-    if (app?.serve === 'container' && app.container) return { container: app.container };
+    if (app?.container) return { container: app.container }; // container + worker apps
     return { file: runtimeLog(name), legacy: logFile(name) };
   }
   return { file: buildLog(name), legacy: logFile(name) };
@@ -839,7 +843,7 @@ export async function api(database, req, res, path) {
       db.setResourceOwner(database, container, user.username);
       return send(res, 200, { ok: true, conn });
     }
-    if (!domain) return send(res, 400, { error: 'domain required' });
+    if (!domain && serve !== 'worker') return send(res, 400, { error: 'domain required' });
 
     db.upsertApp(database, {
       name, type, domain, repo, serve,

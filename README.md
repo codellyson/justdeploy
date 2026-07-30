@@ -173,7 +173,9 @@ literal `${{…}}` to your app. Quote the value in the shell so it doesn't expan
 Two optional per-app knobs, set at `add`, via `justdeploy set`, or in the dashboard Config panel:
 
 - `--release "<cmd>"` — runs after build, before the server starts, with the app's env
-  (e.g. `node ace migration:run --force`).
+  (e.g. `node ace migration:run --force`). For container/worker types it runs as its own phase in
+  the freshly built image, on the same network and volumes; a nonzero exit fails the deploy and
+  leaves the previous version serving.
 - `--persist "tmp,storage"` — runtime dirs symlinked to the persistent `/srv/<name>/data/`
   area so their contents (like a SQLite file) survive the build dir being replaced each deploy.
 
@@ -184,9 +186,37 @@ Two optional per-app knobs, set at `add`, via `justdeploy set`, or in the dashbo
 | `react`  | static      | serves `build/` with SPA fallback                        |
 | `vite`   | static      | serves `dist/` with SPA fallback                          |
 | `static` | static      | serves the repo root                                     |
-| `adonis` | proxy       | `APP_KEY`, `HOST=0.0.0.0`, `PORT`, `NODE_ENV`, migrations |
-| `nextjs` | proxy       | `HOSTNAME=0.0.0.0`, `PORT`; runs `next start` as-is (no next.config change), or standalone if set |
+| `adonis` | container   | `APP_KEY`, `HOST=0.0.0.0`, `PORT`, `NODE_ENV`, migrations |
+| `nextjs` | container   | `HOSTNAME=0.0.0.0`, `PORT`; runs `next start` as-is (no next.config change), or standalone if set |
+| `app`    | container   | `PORT`, `NODE_ENV`; catch-all for anything Railpack can build (Node, Python, Go, …) |
+| `worker` | worker      | `NODE_ENV`; **no port, no domain, no HTTP health check** — for processes that never serve traffic |
 | `postgres` | resource  | `docker run` + scoped non-superuser role, TLS, localhost port |
+
+### Workers (bots, queue consumers, schedulers)
+
+A `worker` is a service that runs but never answers HTTP — a Discord/Telegram bot, a BullMQ or
+SQS consumer, a cron-style scheduler, a scraper. It's built by Railpack exactly like `app`, but
+nothing is published and no route is added, so **it is never health-checked over HTTP** — every
+other type would be killed by that probe for not listening.
+
+```bash
+justdeploy add https://github.com/you/bot.git --type worker
+```
+
+A worker's deploy succeeds when its container **stays up** for a short settle window; a process
+that exits or crash-loops fails the deploy with its own output in the logs. After that Docker's
+`--restart unless-stopped` keeps it alive. Env vars, `--persist`, Postgres references, rollback,
+and auto-deploy on push all work the same as any other service.
+
+A worker that exits straight away isn't a worker — that's a one-shot job, and it belongs in
+`--release "<cmd>"` on a real service instead.
+
+Already registered something as `app` that turned out not to serve HTTP? Convert it in place,
+keeping its env, project, and history:
+
+```bash
+justdeploy set <name> --type worker && justdeploy deploy <name>
+```
 
 ## Users (friends & family)
 

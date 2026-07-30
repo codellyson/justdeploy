@@ -55,7 +55,10 @@ function sources(database) {
 export function resolveEnv(database, appName, self) {
   const cache = new Map();   // `${app}\0${key}` -> resolved value
   const stack = new Set();   // in-progress, for cycle detection
-  const forContainer = db.getApp(database, appName)?.serve === 'container'; // DB reachability
+  // DB reachability: anything running in a container (app OR worker) must reach Postgres over the
+  // shared Docker network, not the host's 127.0.0.1.
+  const serve = db.getApp(database, appName)?.serve;
+  const forContainer = serve === 'container' || serve === 'worker';
 
   const rawEnvOf = (app) => (app === appName ? self : db.getEnv(database, app));
 

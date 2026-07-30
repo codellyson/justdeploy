@@ -419,7 +419,10 @@
 <span class="cmd">justdeploy</span> gc               <span class="cmt"># reclaim disk: trim old container images</span></code></pre>
       </div>
       <p>Supported <code>--type</code> values: <code>vite</code>, <code>react</code>, <code>static</code>,
-      <code>adonis</code>, <code>nextjs</code>, <code>app</code>, <code>postgres</code>.</p>
+      <code>adonis</code>, <code>nextjs</code>, <code>app</code>, <code>worker</code>, <code>postgres</code>.</p>
+      <p><code>worker</code> is for anything that runs but never serves HTTP — a bot, a queue consumer,
+      a scheduler. It takes no domain and no port, and is never health-checked over HTTP; its deploy
+      succeeds when the process stays up.</p>
     </section>
 
     <!-- 5 dashboard -->

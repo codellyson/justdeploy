@@ -5,7 +5,7 @@
 //   /srv/<name>/data             persists across releases (SQLite, uploads)
 // Deploy builds a new release and re-points `current`. Rollback to a kept release just
 // re-points `current` + restarts — no rebuild. See swap() below for the zero-downtime sequence.
-import { existsSync, mkdirSync, rmSync, symlinkSync, readFileSync, writeFileSync, readlinkSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, symlinkSync, readFileSync, writeFileSync, appendFileSync, readlinkSync, readdirSync, statSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import { row, autoEnv } from './table.js';
 import { resolveEnv } from './envref.js';
@@ -19,7 +19,15 @@ import { classify } from './diagnose.js';
 import { run, capture } from './sh.js';
 
 const now = () => new Date().toISOString();
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const KEEP_RELEASES = 5; // besides the current one
+// How long a worker must stay up before its deploy counts as good. A worker answers no HTTP, so
+// this window is the only evidence we have that it booted rather than crash-looped.
+const WORKER_SETTLE = 10;
+// Serve models whose releases come from a Railpack-built image + Docker.
+const isContainerized = (serve) => serve === 'container' || serve === 'worker';
+const DEPLOYABLE = ['static', 'proxy', 'container', 'worker'];
+export const isDeployable = (serve) => DEPLOYABLE.includes(serve);
 
 // The env injected into build/release/run: the app's stored vars + the type's auto vars (PORT,
 // etc.), with any `${{Source.KEY}}` references expanded against resources/other apps (see envref).
@@ -158,8 +166,51 @@ function containerVolumes(name, persist) {
   });
 }
 
+// Copy a container's output into this deploy's build log before we throw it away. A failed deploy
+// ends in `docker rm -f`, which deletes the logs too — without this the user (and classify())
+// only ever see "health check failed", never the stack trace that caused it. It goes in the build
+// log rather than runtime.log because the crash belongs to this deploy, and runtime.log is shadowed
+// by `docker logs` of whatever container is still live.
+function salvageLogs(name, c, note) {
+  try {
+    mkdirSync(dirname(buildLog(name)), { recursive: true });
+    appendFileSync(buildLog(name), `\n[justdeploy] ${note}\n${container.logs(c)}\n`);
+  } catch { /* diagnosis is best-effort — never mask the real failure */ }
+}
+
+// The release phase for container/worker types: one-shot the command in the freshly built image,
+// on the shared network and with the same env + volumes the app will run with. Output lands in the
+// build log next to the build itself; a nonzero exit fails the deploy before anything is swapped.
+async function releasePhase(name, sha, cmd, env, volumes) {
+  const { status, output } = container.runOnce(name, sha, env, volumes, cmd);
+  mkdirSync(dirname(buildLog(name)), { recursive: true });
+  appendFileSync(buildLog(name), `\n[justdeploy] release: ${cmd}\n${output}\n`);
+  if (status !== 0) throw new Error(`release command failed (exit ${status}): ${cmd}`);
+}
+
+// A worker publishes no port, so there is nothing to probe: it is healthy when it is still up,
+// and has not been restarted, after a short settle window. The restart count is what matters —
+// `--restart unless-stopped` would otherwise keep a boot-crashing worker permanently "running".
+async function waitForWorker(c) {
+  const deadline = Date.now() + WORKER_SETTLE * 1000;
+  while (Date.now() < deadline) {
+    const s = container.state(c);
+    if (s.restarts > 0) {
+      throw new Error(`worker crashed and restarted ${s.restarts}x within ${WORKER_SETTLE}s — it is not staying up`);
+    }
+    if (s.status === 'exited') {
+      throw new Error(s.exitCode === 0
+        ? 'worker exited immediately (code 0) — a worker has to keep running; this looks like a one-shot command'
+        : `worker exited with code ${s.exitCode} — it never stayed running`);
+    }
+    if (s.status === 'missing') throw new Error('worker container disappeared right after starting');
+    await sleep(1000);
+  }
+}
+
 // Zero-downtime container swap: build the image, start the new container on a fresh port,
 // health-check it, repoint Caddy, then stop the old one. Same invariant as the host swap.
+// Workers take the same path minus the port, the Caddy route and the HTTP probe.
 async function deployContainer(database, name, app, sha) {
   const src = await archiveSource(name, sha);
   // Monorepo root directory: Railpack builds `.` from its cwd, so point it at the subfolder.
@@ -174,17 +225,33 @@ async function deployContainer(database, name, app, sha) {
   const appStart = row(app.type).railpackStart || null;
   const startCmd = app.release_cmd && appStart ? `${app.release_cmd} && ${appStart}` : appStart;
   await container.build(name, name, sha, buildSrc, startCmd);  // railpack build → image tag
-  const port = db.allocatePort(database);
+  const worker = app.serve === 'worker';
+  const port = worker ? null : db.allocatePort(database);
   const env = appEnv(database, name, app.type, port);    // includes PORT=<port>, ${{ }} resolved (container-aware)
   const volumes = containerVolumes(name, app.persist);
   // Attach provisioned Postgres to the shared network so this container can reach it by name.
   for (const r of db.listResources(database)) if (r.kind === 'postgres') container.connectToNetwork(r.name);
+  // A release command only rides in front of `startCmd` when the type has one to bake it into.
+  // Otherwise (Railpack detects the start itself — nextjs, app, worker) run it as its own phase
+  // against the same image, or it would be silently dropped.
+  if (app.release_cmd && !appStart) await releasePhase(name, sha, app.release_cmd, env, volumes);
   const newC = container.runContainer(name, sha, port, env, volumes);
 
-  const healthy = await proc.healthCheck(port, { path: app.health_path, timeout: app.health_timeout });
-  if (!healthy) {
-    container.stop(newC);
-    throw new Error(`health check failed on port ${port} — the container never answered a healthy response`);
+  if (worker) {
+    try {
+      await waitForWorker(newC);
+    } catch (e) {
+      salvageLogs(name, newC, e.message);
+      container.stop(newC);
+      throw e;
+    }
+  } else {
+    const healthy = await proc.healthCheck(port, { path: app.health_path, timeout: app.health_timeout });
+    if (!healthy) {
+      salvageLogs(name, newC, `health check failed on port ${port} — container output follows`);
+      container.stop(newC);
+      throw new Error(`health check failed on port ${port} — the container never answered a healthy response`);
+    }
   }
 
   const oldC = app.container;
@@ -212,7 +279,7 @@ export async function deploy(database, name, opts = {}) {
     const authEnv = await github.cloneAuthEnv(database, app.owner, app.repo); // owner's App token or PAT
     sha = await fetchSha(name, app.repo, opts.sha, authEnv);
 
-    if (app.serve === 'container') {
+    if (isContainerized(app.serve)) {
       await deployContainer(database, name, app, sha);
     } else {
       await buildRelease(database, name, app.type, sha);
@@ -247,16 +314,26 @@ export async function deploy(database, name, opts = {}) {
 export async function rollback(database, name, sha) {
   const app = db.getApp(database, name);
   if (!app) throw new Error(`no such app: ${name}`);
-  // Container: instant if the old image is still present, else rebuild that commit.
-  if (app.serve === 'container') {
+  // Container/worker: instant if the old image is still present, else rebuild that commit.
+  if (isContainerized(app.serve)) {
     if (!container.imageExists(name, sha)) return deploy(database, name, { sha });
+    const worker = app.serve === 'worker';
     const deployId = db.startDeploy(database, name, now());
     try {
-      const port = db.allocatePort(database);
+      const port = worker ? null : db.allocatePort(database);
       const env = appEnv(database, name, app.type, port);
       const newC = container.runContainer(name, sha, port, env, containerVolumes(name, app.persist));
-      const healthy = await proc.healthCheck(port, { path: app.health_path, timeout: app.health_timeout });
-      if (!healthy) { container.stop(newC); throw new Error(`health check failed on port ${port}`); }
+      if (worker) {
+        try { await waitForWorker(newC); }
+        catch (e) { salvageLogs(name, newC, e.message); container.stop(newC); throw e; }
+      } else {
+        const healthy = await proc.healthCheck(port, { path: app.health_path, timeout: app.health_timeout });
+        if (!healthy) {
+          salvageLogs(name, newC, `health check failed on port ${port} — container output follows`);
+          container.stop(newC);
+          throw new Error(`health check failed on port ${port}`);
+        }
+      }
       const oldC = app.container;
       db.setPorts(database, name, { live: port, pending: null, pid: null });
       db.setContainer(database, name, newC);
@@ -331,7 +408,7 @@ async function swap(database, app, sha) {
 // Reclaim disk: for every container app keep only its newest few images (rollback still works),
 // drop dangling layers, and cap the shared BuildKit cache. Safe to run any time.
 export function gcContainers(database) {
-  const apps = db.listApps(database).filter((a) => a.serve === 'container');
+  const apps = db.listApps(database).filter((a) => isContainerized(a.serve));
   for (const a of apps) container.pruneImages(a.name, currentRelease(a.name));
   container.pruneBuildCache();
   return apps.map((a) => a.name);
@@ -344,7 +421,7 @@ export async function destroy(database, name, { keepData = false } = {}) {
 
   if (app.serve === 'proxy' && app.live_pid) {
     await proc.drainAndKill(app.live_pid, 0);
-  } else if (app.serve === 'container') {
+  } else if (isContainerized(app.serve)) {
     container.stop(app.container);
     container.pruneExcept(name, null); // remove any lingering jd-<app>-* containers
   }

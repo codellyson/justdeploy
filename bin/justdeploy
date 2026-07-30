@@ -6,6 +6,8 @@
 //   justdeploy uninstall [--keep-data] [--keep-caddy]       remove JustDeploy (prompts; full by default)
 //   justdeploy add <repo> [--type T] [--domain D] [--name N] register + deploy (type + domain inferred from the repo)
 //                          [--subdir path]                    build/serve from a repo subfolder (monorepos)
+//                          [--type worker]                    a process that never serves HTTP (bot, queue consumer,
+//                                                             scheduler): no port, no domain, no health check
 //   justdeploy deploy [name]                                run the deploy loop
 //   justdeploy ls                                           list apps and their state
 //   justdeploy logs <name> [-f]                             tail an app's log
@@ -15,6 +17,8 @@
 //   justdeploy rollback <name>                              redeploy the previous successful commit
 //   justdeploy set <name> [--release "cmd"] [--persist a,b] configure release cmd / persisted dirs
 //                          [--subdir path]                    set the monorepo root directory
+//                          [--type T]                         convert an app to another type in place
+//                                                             (e.g. --type worker), keeping its env
 //   justdeploy webhook [--rotate]                           enable git-push auto-deploy; print setup
 //   justdeploy backup config --endpoint U --bucket B ...    set the S3/R2 destination (bring your own bucket)
 //   justdeploy backup [--keep N] [--local] [--schedule I]   snapshot state.db + data + pg, upload to S3/R2
@@ -32,6 +36,7 @@ import * as db from '../src/db.js';
 import * as engine from '../src/engine.js';
 import * as caddy from '../src/caddy.js';
 import * as pg from '../src/postgres.js';
+import * as container from '../src/container.js';
 import * as auth from '../src/auth.js';
 import * as backup from '../src/backup.js';
 import * as s3 from '../src/s3.js';
@@ -111,9 +116,9 @@ async function cmdAdd(a) {
 
   // Infer the domain when not given: <name>.<base>, where base is an explicit `base_domain`
   // setting or, failing that, the dashboard's own domain. So `add <repo>` just works once a
-  // dashboard exists. Resource types (postgres) need no domain.
+  // dashboard exists. Resource (postgres) and worker types serve no traffic, so need no domain.
   let domain = a.domain;
-  if (serve !== 'resource' && !domain) {
+  if (serve !== 'resource' && serve !== 'worker' && !domain) {
     const base = db.getSetting(database, 'base_domain') || db.getSetting(database, 'dashboard_domain');
     if (base) domain = `${name.toLowerCase()}.${base}`;
     else die('no --domain given and no base domain set — pass --domain, or install the dashboard first');
@@ -139,7 +144,7 @@ async function cmdAdd(a) {
 
   console.log(`registered ${name} (${type}${domain ? ' → ' + domain : ''})`);
 
-  if (serve === 'static' || serve === 'proxy' || serve === 'container') {
+  if (engine.isDeployable(serve)) {
     console.log('deploying...');
     await cmdDeploy({ _: [name] });
   }
@@ -149,7 +154,7 @@ async function cmdDeploy(a) {
   const database = db.open();
   const apps = a._[0] ? [db.getApp(database, a._[0])] : db.listApps(database);
   if (!apps[0]) die('no app to deploy');
-  for (const app of apps.filter((x) => x && (x.serve === 'static' || x.serve === 'proxy' || x.serve === 'container'))) {
+  for (const app of apps.filter((x) => x && engine.isDeployable(x.serve))) {
     process.stdout.write(`deploy ${app.name} ... `);
     try {
       const { sha } = await engine.deploy(database, app.name);
@@ -181,7 +186,8 @@ function cmdLs() {
   if (!apps.length && !resources.length) return console.log('nothing yet — try: justdeploy add <repo> --type vite');
   for (const a of apps) {
     const where = a.serve === 'proxy' ? `:${a.live_port ?? '-'} pid ${a.live_pid ?? '-'}`
-      : a.serve === 'container' ? `:${a.live_port ?? '-'} (container)` : a.serve;
+      : a.serve === 'container' ? `:${a.live_port ?? '-'} (container)`
+      : a.serve === 'worker' ? `worker ${container.running(a.container) ? 'up' : 'down'}` : a.serve;
     console.log(`${a.name.padEnd(20)} ${a.type.padEnd(8)} ${(a.domain || '').padEnd(24)} ${where}`);
   }
   for (const r of resources) {
@@ -206,7 +212,7 @@ function cmdLogs(a) {
     return existsSync(lf) ? tail(lf) : die(`no build log yet for ${name}`);
   }
   const app = db.getApp(db.open(), name);
-  if (app && app.serve === 'container' && app.container) {
+  if (app?.container) { // container + worker apps log through docker
     return spawn('docker', a.follow ? ['logs', '-f', '--tail', '200', app.container] : ['logs', '--tail', '200', app.container], { stdio: 'inherit' });
   }
   const lf = runtimeLog(name);
@@ -306,15 +312,30 @@ async function cmdRollback(a) {
 
 function cmdSet(a) {
   const name = a._[0];
-  if (!name) die('usage: justdeploy set <name> [--release "cmd"] [--persist "a,b"] [--health-path /p] [--subdir path]');
+  if (!name) die('usage: justdeploy set <name> [--type T] [--release "cmd"] [--persist "a,b"] [--health-path /p] [--subdir path]');
   const database = db.open();
-  if (!db.getApp(database, name)) die(`no such app: ${name}`);
+  const app = db.getApp(database, name);
+  if (!app) die(`no such app: ${name}`);
+  // Convert in place — e.g. a bot registered as `app` (and killed by the HTTP health check) into
+  // a `worker`. Keeps env, project, and history, which rm + add would throw away.
+  if ('type' in a) {
+    if (!TYPES.includes(a.type)) die(`--type must be one of: ${TYPES.join(', ')}`);
+    const serve = row(a.type).serve;
+    if (serve === 'resource' || app.serve === 'resource') die('cannot convert between an app and a database');
+    db.setAppType(database, name, a.type, serve);
+    // A worker publishes nothing; drop the stale port so it isn't held out of the pool.
+    if (serve === 'worker') db.setPorts(database, name, { live: null, pending: null, pid: null });
+    console.log(`${name} is now type ${a.type} (${serve})`);
+  }
   const f = {};
   if ('release' in a) f.release_cmd = a.release || null;
   if ('persist' in a) f.persist = a.persist || null;
   if ('health-path' in a) f.health_path = a['health-path'] || '/';
   if ('subdir' in a || 'root' in a) f.subdir = normSubdir(a.subdir ?? a.root) || null;
-  if (!Object.keys(f).length) die('nothing to set — pass --release, --persist, --health-path, or --subdir');
+  if (!Object.keys(f).length) {
+    if ('type' in a) return console.log('redeploy to apply');
+    die('nothing to set — pass --type, --release, --persist, --health-path, or --subdir');
+  }
   db.updateAppConfig(database, name, f);
   console.log(`updated ${name} — redeploy to apply`);
 }

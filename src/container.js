@@ -53,18 +53,32 @@ export const imageExists = (app, sha) => docker(['image', 'inspect', imageTag(ap
 
 // Run the app's image detached on a localhost port. The app must listen on $PORT (passed in env);
 // we publish 127.0.0.1:port:port so Caddy can reverse-proxy to it. `volumes` are `host:container`.
+// A null `port` publishes nothing — that's a worker, which serves no traffic.
 export function runContainer(app, sha, port, env, volumes = []) {
   ensureNetwork();
   const name = containerName(app, sha);
   docker(['rm', '-f', name]); // idempotent
   const args = ['run', '-d', '--name', name, '--restart', 'unless-stopped', '--network', NET];
   for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
-  args.push('-p', `127.0.0.1:${port}:${port}`);
+  if (port) args.push('-p', `127.0.0.1:${port}:${port}`);
   for (const v of volumes) args.push('-v', v);
   args.push(imageTag(app, sha));
   const r = docker(args);
   if (r.status !== 0) throw new Error(`docker run failed: ${(r.stderr || '').trim()}`);
   return name;
+}
+
+// Run a one-shot command in the app's image and wait for it — the release phase (migrations)
+// for types whose start command Railpack detects for us, so there is nothing to bake it in front
+// of. `--entrypoint sh` because appending args to an image's own ENTRYPOINT would mangle them.
+export function runOnce(app, sha, env, volumes, cmd) {
+  ensureNetwork();
+  const args = ['run', '--rm', '--entrypoint', 'sh', '--network', NET];
+  for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
+  for (const v of volumes) args.push('-v', v);
+  args.push(imageTag(app, sha), '-c', cmd);
+  const r = docker(args);
+  return { status: r.status, output: `${r.stdout || ''}${r.stderr || ''}` };
 }
 
 export function stop(name) {
@@ -76,6 +90,23 @@ export const running = (name) => {
   const r = docker(['inspect', '-f', '{{.State.Running}}', name]);
   return r.status === 0 && r.stdout.trim() === 'true';
 };
+
+// Liveness detail for containers with no port to probe (workers). `restarts` is the key signal:
+// `--restart unless-stopped` makes a container that crashes on boot look "running" forever, so a
+// nonzero restart count is how you tell a healthy worker from a crash loop.
+export function state(name) {
+  const r = docker(['inspect', '-f', '{{.State.Status}} {{.State.ExitCode}} {{.RestartCount}}', name]);
+  if (r.status !== 0) return { status: 'missing', exitCode: null, restarts: 0, running: false };
+  const [status, code, restarts] = r.stdout.trim().split(/\s+/);
+  return { status, exitCode: Number(code), restarts: Number(restarts), running: status === 'running' };
+}
+
+// A container's recent output. Used to salvage the crash before a failed deploy removes it —
+// otherwise `docker rm -f` takes the only evidence of why it died with it.
+export function logs(name, tail = 200) {
+  const r = docker(['logs', '--tail', String(tail), name]);
+  return r.status === 0 ? `${r.stdout || ''}${r.stderr || ''}` : '';
+}
 
 // Drop any container whose name is jd-<app>-* except `keep` — cleans up old releases.
 export function pruneExcept(app, keep) {

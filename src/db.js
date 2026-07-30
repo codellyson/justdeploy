@@ -284,6 +284,11 @@ export function updateAppConfig(db, name, f) {
   db.prepare(`UPDATE apps SET ${sets.join(', ')} WHERE name=?`).run(...vals);
 }
 
+// Convert an existing app to another framework type (and its serve model) in place, keeping its
+// env, project, owner, and deploy history — the alternative is rm + add, which drops all of it.
+export const setAppType = (db, name, type, serve) =>
+  db.prepare('UPDATE apps SET type=?, serve=? WHERE name=?').run(type, serve, name);
+
 export const setPorts = (db, name, { live, pending, pid }) =>
   db.prepare('UPDATE apps SET live_port=?, pending_port=?, live_pid=? WHERE name=?')
     .run(live ?? null, pending ?? null, pid ?? null, name);
