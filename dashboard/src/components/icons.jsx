@@ -60,6 +60,7 @@ const TYPE_ICON = {
   nextjs: SiNextdotjs,
   app: LuServer,
   worker: LuCog,
+  cron: LuClock,
   postgres: SiPostgresql,
 };
 

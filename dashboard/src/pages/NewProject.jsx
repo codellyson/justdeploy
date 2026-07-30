@@ -7,11 +7,12 @@ import { TypeIcon, Icon } from '../components/icons';
 import { GithubSource } from '../components/GithubSource';
 import { cx, typeLabel, slug, suggestName, nameFromRepo, releaseHint, persistHint } from '../lib/format';
 
-const TYPES = ['react', 'vite', 'static', 'adonis', 'nextjs', 'app', 'worker', 'postgres'];
-const CONTAINER = ['adonis', 'nextjs', 'app', 'worker']; // Railpack-built; take a release cmd + persist dirs
+const TYPES = ['react', 'vite', 'static', 'adonis', 'nextjs', 'app', 'worker', 'cron', 'postgres'];
+const CONTAINER = ['adonis', 'nextjs', 'app', 'worker', 'cron']; // Railpack-built; take a release cmd + persist dirs
 const needsRepo = (t) => t && t !== 'postgres';
-// A worker serves no traffic, so it gets a repo but no domain field.
-const needsDomain = (t) => needsRepo(t) && t !== 'worker';
+// Workers and cron jobs serve no traffic, so they get a repo but no domain field.
+const needsDomain = (t) => needsRepo(t) && t !== 'worker' && t !== 'cron';
+const SCHEDULES = ['hourly', 'daily', 'weekly', 'monthly'];
 
 function StepDot({ n, active }) {
   return (
@@ -73,6 +74,7 @@ export function NewProject() {
       if (needsRepo(type)) { body.repo = (f.repo || '').trim(); body.subdir = (f.subdir || '').trim(); }
       if (needsDomain(type)) body.domain = (f.domain || '').trim();
       if (CONTAINER.includes(type)) { body.release = (f.release || '').trim(); body.persist = (f.persist || '').trim(); }
+      if (type === 'cron') { body.schedule = (f.schedule || 'daily').trim(); body.cmd = (f.cmd || '').trim(); }
       const back = proj && proj !== 'default' ? `/projects/${proj}` : '/';
       const r = await api.createApp(body);
       invalidate();
@@ -146,7 +148,24 @@ export function NewProject() {
               ) : (
                 <div className="flex items-start gap-2 rounded-xl border border-border bg-bg px-3 py-2.5">
                   <Icon.Terminal className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
-                  <span className="text-xs text-muted">No domain or port — a worker just runs. It's healthy when it stays up, and you watch it in Logs.</span>
+                  <span className="text-xs text-muted">{type === 'cron'
+                    ? 'No domain or port — this runs on a schedule, then exits. Each run\'s output shows up in Logs.'
+                    : 'No domain or port — a worker just runs. It\'s healthy when it stays up, and you watch it in Logs.'}</span>
+                </div>
+              )}
+              {type === 'cron' && (
+                <div className="flex flex-wrap gap-4">
+                  <div className="flex flex-1 basis-52 flex-col gap-1.5">
+                    <label className="label-tiny">Schedule</label>
+                    <input list="jd-schedules" value={f.schedule ?? 'daily'} onChange={set('schedule')} placeholder="daily" className="field font-mono text-[0.8rem]" />
+                    <datalist id="jd-schedules">{SCHEDULES.map((s) => <option key={s} value={s} />)}</datalist>
+                    <span className="text-xs text-muted">hourly · daily · weekly, or an OnCalendar expression like <code>*-*-* 03:00:00</code></span>
+                  </div>
+                  <div className="flex flex-1 basis-52 flex-col gap-1.5">
+                    <label className="label-tiny">Command</label>
+                    <input value={f.cmd || ''} onChange={set('cmd')} placeholder="npm run ingest" className="field font-mono text-[0.8rem]" />
+                    <span className="text-xs text-muted">what each run executes, inside the built image</span>
+                  </div>
                 </div>
               )}
               <div className="flex flex-col gap-1.5">

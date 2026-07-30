@@ -8,6 +8,10 @@
 //                          [--subdir path]                    build/serve from a repo subfolder (monorepos)
 //                          [--type worker]                    a process that never serves HTTP (bot, queue consumer,
 //                                                             scheduler): no port, no domain, no health check
+//                          [--type cron --schedule S --cmd C] a batch job run on a schedule instead of kept alive
+//                                                             (e.g. --schedule daily --cmd "npm run ingest")
+//   justdeploy run <name>                                   run a scheduled job now, without waiting for its timer
+//   justdeploy schedule                                     list scheduled jobs: when they fire and how the last run went
 //   justdeploy deploy [name]                                run the deploy loop
 //   justdeploy ls                                           list apps and their state
 //   justdeploy logs <name> [-f]                             tail an app's log
@@ -37,6 +41,7 @@ import * as engine from '../src/engine.js';
 import * as caddy from '../src/caddy.js';
 import * as pg from '../src/postgres.js';
 import * as container from '../src/container.js';
+import * as cron from '../src/cron.js';
 import * as auth from '../src/auth.js';
 import * as backup from '../src/backup.js';
 import * as s3 from '../src/s3.js';
@@ -118,14 +123,18 @@ async function cmdAdd(a) {
   // setting or, failing that, the dashboard's own domain. So `add <repo>` just works once a
   // dashboard exists. Resource (postgres) and worker types serve no traffic, so need no domain.
   let domain = a.domain;
-  if (serve !== 'resource' && serve !== 'worker' && !domain) {
+  if (!['resource', 'worker', 'cron'].includes(serve) && !domain) {
     const base = db.getSetting(database, 'base_domain') || db.getSetting(database, 'dashboard_domain');
     if (base) domain = `${name.toLowerCase()}.${base}`;
     else die('no --domain given and no base domain set — pass --domain, or install the dashboard first');
   }
 
   // Validate the shape; the record lives in the state db (source of truth), not a yml file.
-  config.validate({ name, type, domain, repo, release: a.release, persist: a.persist });
+  const schedule = a.schedule ?? a.every ?? null;
+  const cmd = a.cmd ?? a.command ?? null;
+  config.validate({ name, type, domain, repo, release: a.release, persist: a.persist, schedule, cmd });
+  // Catch a bad OnCalendar expression here rather than at 3am when nothing fires.
+  if (serve === 'cron') { try { cron.validateSchedule(schedule); } catch (e) { die(e.message); } }
   // --subdir (alias --root) is the repo folder to build/serve from (monorepos). normSubdir throws
   // on traversal, so a bad value fails here rather than mid-build.
   const subdir = normSubdir(a.subdir ?? a.root) || null;
@@ -134,7 +143,7 @@ async function cmdAdd(a) {
     // The type carries its own release command (Adonis → migrations); --release overrides it.
     release_cmd: a.release ?? row(type).release ?? null, persist: a.persist ?? null,
     // --dir serves a subfolder of the repo for static apps (e.g. docs/); default is the type's artifact.
-    artifact: a.dir ?? null, subdir, owner: 'admin', created_at: now(),
+    artifact: a.dir ?? null, subdir, schedule, cmd, owner: 'admin', created_at: now(),
   });
 
   // Type-specific auto-fill so the documented traps never happen.
@@ -187,7 +196,8 @@ function cmdLs() {
   for (const a of apps) {
     const where = a.serve === 'proxy' ? `:${a.live_port ?? '-'} pid ${a.live_pid ?? '-'}`
       : a.serve === 'container' ? `:${a.live_port ?? '-'} (container)`
-      : a.serve === 'worker' ? `worker ${container.running(a.container) ? 'up' : 'down'}` : a.serve;
+      : a.serve === 'worker' ? `worker ${container.running(a.container) ? 'up' : 'down'}`
+      : a.serve === 'cron' ? `cron ${a.schedule || '?'}${cron.status(a.name).scheduled ? '' : ' (not armed)'}` : a.serve;
     console.log(`${a.name.padEnd(20)} ${a.type.padEnd(8)} ${(a.domain || '').padEnd(24)} ${where}`);
   }
   for (const r of resources) {
@@ -212,6 +222,11 @@ function cmdLogs(a) {
     return existsSync(lf) ? tail(lf) : die(`no build log yet for ${name}`);
   }
   const app = db.getApp(db.open(), name);
+  // A scheduled job leaves no long-lived container — every run's output is in the journal.
+  if (app?.serve === 'cron') {
+    const unit = `${cron.unitName(name)}.service`;
+    return spawn('journalctl', a.follow ? ['-u', unit, '-n', '200', '-f'] : ['-u', unit, '-n', '200', '--no-pager'], { stdio: 'inherit' });
+  }
   if (app?.container) { // container + worker apps log through docker
     return spawn('docker', a.follow ? ['logs', '-f', '--tail', '200', app.container] : ['logs', '--tail', '200', app.container], { stdio: 'inherit' });
   }
@@ -332,12 +347,41 @@ function cmdSet(a) {
   if ('persist' in a) f.persist = a.persist || null;
   if ('health-path' in a) f.health_path = a['health-path'] || '/';
   if ('subdir' in a || 'root' in a) f.subdir = normSubdir(a.subdir ?? a.root) || null;
+  if ('schedule' in a || 'every' in a) {
+    const s = a.schedule ?? a.every;
+    try { f.schedule = cron.validateSchedule(s); } catch (e) { die(e.message); }
+  }
+  if ('cmd' in a || 'command' in a) f.cmd = a.cmd ?? a.command;
   if (!Object.keys(f).length) {
     if ('type' in a) return console.log('redeploy to apply');
-    die('nothing to set — pass --type, --release, --persist, --health-path, or --subdir');
+    die('nothing to set — pass --type, --release, --persist, --health-path, --subdir, --schedule, or --cmd');
   }
   db.updateAppConfig(database, name, f);
   console.log(`updated ${name} — redeploy to apply`);
+}
+
+// Fire a scheduled job now instead of waiting for its timer — the way you test one.
+function cmdRun(a) {
+  const name = a._[0];
+  if (!name) die('usage: justdeploy run <name>');
+  const app = db.getApp(db.open(), name);
+  if (!app) die(`no such app: ${name}`);
+  if (app.serve !== 'cron') die(`${name} is not a scheduled job (type ${app.type}) — use \`justdeploy deploy ${name}\``);
+  try { cron.runNow(name); } catch (e) { die(e.message); }
+  console.log(`started ${name} — follow it with: justdeploy logs ${name} -f`);
+}
+
+function cmdSchedule() {
+  const database = db.open();
+  const jobs = db.listApps(database).filter((a) => a.serve === 'cron');
+  if (!jobs.length) return console.log('no scheduled jobs — add one with: justdeploy add <repo> --type cron --schedule daily --cmd "npm run ingest"');
+  for (const j of jobs) {
+    const s = cron.status(j.name);
+    const last = s.lastExit === null ? 'never run' : s.lastExit === 0 ? 'last run ok' : `last run FAILED (exit ${s.lastExit})`;
+    console.log(`${j.name.padEnd(20)} ${(j.schedule || '?').padEnd(22)} ${(s.scheduled ? 'armed' : 'NOT ARMED').padEnd(10)} ${last}`);
+    if (s.next) console.log(`${''.padEnd(20)} next: ${s.next}`);
+    if (j.cmd) console.log(`${''.padEnd(20)} cmd:  ${j.cmd}`);
+  }
 }
 
 async function cmdGithub(a) {
@@ -610,6 +654,8 @@ try {
     case 'pg': cmdPg(a); break;
     case 'rm': case 'destroy': await cmdRm(a); break;
     case 'rollback': await cmdRollback(a); break;
+    case 'run': cmdRun(a); break;
+    case 'schedule': cmdSchedule(); break;
     case 'set': cmdSet(a); break;
     case 'webhook': cmdWebhook(a); break;
     case 'github': await cmdGithub(a); break;
@@ -618,7 +664,7 @@ try {
     case 'dashboard': await cmdDashboard(a); break;
     case 'reconcile': await cmdReconcile(); break;
     default:
-      console.log('usage: justdeploy <setup|doctor|uninstall|add|deploy|ls|logs|env|pg|rm|rollback|set|webhook|github|backup|restore|dashboard|reconcile>');
+      console.log('usage: justdeploy <setup|doctor|uninstall|add|deploy|ls|logs|env|pg|rm|rollback|run|schedule|set|webhook|github|backup|restore|dashboard|reconcile>');
       process.exit(cmd ? 1 : 0);
   }
 } catch (e) {

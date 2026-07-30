@@ -11,6 +11,7 @@ import * as engine from './engine.js';
 import * as caddy from './caddy.js';
 import * as proc from './proc.js';
 import * as container from './container.js';
+import * as cron from './cron.js';
 import * as pg from './postgres.js';
 import * as firewall from './firewall.js';
 import * as auth from './auth.js';
@@ -243,6 +244,8 @@ function appView(database, a) {
     // A worker has no URL to click and no port to read, so whether its container is up is the
     // only live signal the UI can show. Other serve models don't pay for the docker inspect.
     running: a.serve === 'worker' ? container.running(a.container) : undefined,
+    schedule: a.schedule, cmd: a.cmd,
+    cron: a.serve === 'cron' ? cron.status(a.name) : undefined,
     rollbackTo: db.rollbackTarget(database, a.name),
     releases: engine.listReleases(a.name),      // SHAs with a kept build → instant rollback
     currentSha: engine.currentRelease(a.name),
@@ -308,12 +311,25 @@ function streamDockerLogs(req, res, container) {
   req.on('close', () => { clearInterval(hb); child.kill('SIGKILL'); });
 }
 
+// SSE stream of a systemd unit's journal — a scheduled job's runs, as they happen.
+function streamJournal(req, res, unit) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  const sse = (text) => { for (const line of text.split('\n')) res.write(`data: ${line}\n`); res.write('\n'); };
+  const child = spawn('journalctl', ['-u', unit, '-n', '300', '-f', '--no-pager']);
+  child.stdout.on('data', (d) => sse(d.toString()));
+  child.stderr.on('data', (d) => sse(d.toString()));
+  const hb = setInterval(() => res.write(': hb\n\n'), 15000);
+  req.on('close', () => { clearInterval(hb); child.kill('SIGKILL'); });
+}
+
 // Where to read an app's logs for a kind: build → build.log; runtime → the app's live output
-// (runtime.log for host processes, `docker logs` for containers). Falls back to the legacy
-// combined app.log for apps not yet redeployed after the split.
+// (runtime.log for host processes, `docker logs` for containers, journald for cron jobs).
+// Falls back to the legacy combined app.log for apps not yet redeployed after the split.
 function logSource(database, name, kind) {
   const app = db.getApp(database, name);
   if (kind === 'runtime') {
+    // A scheduled job has no long-lived container; each run's output lands in the journal.
+    if (app?.serve === 'cron') return { unit: `${cron.unitName(name)}.service` };
     if (app?.container) return { container: app.container }; // container + worker apps
     return { file: runtimeLog(name), legacy: logFile(name) };
   }
@@ -803,7 +819,7 @@ export async function api(database, req, res, path) {
   }
 
   if (path === '/api/apps' && req.method === 'POST') {
-    const { name, type, domain, repo, release, persist, subdir, project } = await body(req);
+    const { name, type, domain, repo, release, persist, subdir, project, schedule, cmd } = await body(req);
     if (!TYPES.includes(type)) return send(res, 400, { error: 'bad type' });
     if (!name || !/^[a-z0-9-]+$/.test(name)) return send(res, 400, { error: 'name must be [a-z0-9-]' });
     let root;
@@ -843,12 +859,17 @@ export async function api(database, req, res, path) {
       db.setResourceOwner(database, container, user.username);
       return send(res, 200, { ok: true, conn });
     }
-    if (!domain && serve !== 'worker') return send(res, 400, { error: 'domain required' });
+    if (!domain && !['worker', 'cron'].includes(serve)) return send(res, 400, { error: 'domain required' });
+    if (serve === 'cron') {
+      if (!cmd) return send(res, 400, { error: 'a command is required — what should each run execute? (e.g. "npm run ingest")' });
+      try { cron.validateSchedule(schedule); } catch (e) { return send(res, 400, { error: e.message }); }
+    }
 
     db.upsertApp(database, {
       name, type, domain, repo, serve,
       // The type carries its own release command (Adonis → migrations); an explicit one overrides.
-      release_cmd: release || row(type).release || null, persist: persist || null, subdir: root, project: proj, owner: user.username, created_at: now(),
+      release_cmd: release || row(type).release || null, persist: persist || null, subdir: root, project: proj, owner: user.username,
+      schedule: schedule || null, cmd: cmd || null, created_at: now(),
     });
     if (type === 'adonis') db.setEnv(database, name, 'APP_KEY', randomBytes(32).toString('base64url'));
 
@@ -857,14 +878,23 @@ export async function api(database, req, res, path) {
   }
 
   // /api/apps/:name/...
-  const m = path.match(/^\/api\/apps\/([a-z0-9-]+)(\/(deploy|logs|env|refs|config|stream|rollback|deploys))?$/);
+  const m = path.match(/^\/api\/apps\/([a-z0-9-]+)(\/(deploy|logs|env|refs|config|stream|rollback|deploys|run))?$/);
   if (m) {
     const name = m[1], sub = m[3];
     if (denyNotOwner(db.getApp(database, name))) return;
 
+    // Fire a scheduled job now rather than waiting for its timer — how you test one.
+    if (sub === 'run' && req.method === 'POST') {
+      const app = db.getApp(database, name);
+      if (app?.serve !== 'cron') return send(res, 400, { error: 'not a scheduled job' });
+      try { cron.runNow(name); } catch (e) { return send(res, 400, { error: e.message }); }
+      return send(res, 200, { ok: true, started: true });
+    }
+
     if (sub === 'stream' && req.method === 'GET') {
       const kind = new URL(req.url, 'http://x').searchParams.get('kind') || 'build';
       const src = logSource(database, name, kind);
+      if (src.unit) return streamJournal(req, res, src.unit);              // SSE from journalctl (cron)
       if (src.container) return streamDockerLogs(req, res, src.container); // SSE from docker logs
       return streamLog(req, res, existsSync(src.file) ? src.file : src.legacy); // SSE tail of the file
     }
@@ -880,14 +910,19 @@ export async function api(database, req, res, path) {
     }
 
     if (sub === 'config' && req.method === 'PUT') {
-      const { release, persist, health_path, subdir, group } = await body(req);
+      const { release, persist, health_path, subdir, group, schedule, cmd } = await body(req);
       let root;
       try { root = subdir === undefined ? undefined : (normSubdir(subdir) || null); }
       catch (e) { return send(res, 400, { error: e.message }); }
+      if (schedule !== undefined) {
+        try { cron.validateSchedule(schedule); } catch (e) { return send(res, 400, { error: e.message }); }
+      }
       db.updateAppConfig(database, name, {
         release_cmd: release ?? null, persist: persist ?? null,
         ...(health_path ? { health_path } : {}),
         ...(root === undefined ? {} : { subdir: root }),
+        ...(schedule === undefined ? {} : { schedule: cron.normalizeSchedule(schedule) }),
+        ...(cmd === undefined ? {} : { cmd: cmd || null }),
       });
       // Group is its own column; a canvas-only grouping label (no redeploy needed).
       if (group !== undefined) db.setAppGroup(database, name, String(group || '').trim() || null);
@@ -906,7 +941,9 @@ export async function api(database, req, res, path) {
       const kind = new URL(req.url, 'http://x').searchParams.get('kind') || 'build';
       const src = logSource(database, name, kind);
       let text = '';
-      if (src.container) {
+      if (src.unit) {
+        try { text = execSync(`journalctl -u ${src.unit} -n 400 --no-pager 2>&1`, { encoding: 'utf8' }); } catch { text = ''; }
+      } else if (src.container) {
         try { text = execSync(`docker logs --tail 400 ${src.container} 2>&1`, { encoding: 'utf8' }); } catch { text = ''; }
       } else {
         text = existsSync(src.file) ? readFileSync(src.file, 'utf8')

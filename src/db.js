@@ -101,6 +101,8 @@ export function open(file = STATE_DB) {
     'ALTER TABLE resources ADD COLUMN owner TEXT',
     'ALTER TABLE projects ADD COLUMN owner TEXT',
     'ALTER TABLE apps ADD COLUMN grp TEXT', // optional sub-group within a project (canvas)
+    'ALTER TABLE apps ADD COLUMN schedule TEXT', // cron type: OnCalendar expression
+    'ALTER TABLE apps ADD COLUMN cmd TEXT',      // cron type: the command to run each fire
   ]) { try { db.exec(alter); } catch { /* column already exists */ } }
   // Every service belongs to a project; ungrouped ones (and older dbs) land in 'default'.
   db.prepare("INSERT INTO projects (name, created_at) VALUES ('default', ?) ON CONFLICT(name) DO NOTHING")
@@ -254,8 +256,8 @@ export const listApps = (db, owner = null) =>
 
 export function upsertApp(db, a) {
   db.prepare(`
-    INSERT INTO apps (name, type, domain, repo, serve, health_path, health_timeout, drain_seconds, release_cmd, persist, artifact, subdir, project, owner, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO apps (name, type, domain, repo, serve, health_path, health_timeout, drain_seconds, release_cmd, persist, artifact, subdir, project, owner, schedule, cmd, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(name) DO UPDATE SET
       type=excluded.type, domain=excluded.domain, repo=excluded.repo, serve=excluded.serve,
       health_path=excluded.health_path, health_timeout=excluded.health_timeout,
@@ -265,18 +267,21 @@ export function upsertApp(db, a) {
       artifact=coalesce(excluded.artifact, apps.artifact),
       subdir=coalesce(excluded.subdir, apps.subdir),
       project=coalesce(excluded.project, apps.project),
-      owner=coalesce(excluded.owner, apps.owner)
+      owner=coalesce(excluded.owner, apps.owner),
+      schedule=coalesce(excluded.schedule, apps.schedule),
+      cmd=coalesce(excluded.cmd, apps.cmd)
   `).run(
     a.name, a.type, a.domain ?? null, a.repo ?? null, a.serve,
     a.health_path ?? '/', a.health_timeout ?? 30, a.drain_seconds ?? 10,
-    a.release_cmd ?? null, a.persist ?? null, a.artifact ?? null, a.subdir ?? null, a.project ?? 'default', a.owner ?? null, a.created_at,
+    a.release_cmd ?? null, a.persist ?? null, a.artifact ?? null, a.subdir ?? null, a.project ?? 'default', a.owner ?? null,
+    a.schedule ?? null, a.cmd ?? null, a.created_at,
   );
 }
 
 // Update just the deploy-config fields (release command, persist paths, health path).
 export function updateAppConfig(db, name, f) {
   const sets = [], vals = [];
-  for (const k of ['release_cmd', 'persist', 'health_path', 'subdir']) {
+  for (const k of ['release_cmd', 'persist', 'health_path', 'subdir', 'schedule', 'cmd']) {
     if (f[k] !== undefined) { sets.push(`${k}=?`); vals.push(f[k]); }
   }
   if (!sets.length) return;

@@ -75,6 +75,11 @@ export const TABLE = {
   worker: {
     serve: 'worker',
   },
+  // A batch job: same Railpack image, but run on a schedule instead of kept alive. Nothing stays
+  // running between fires, so there is nothing to health-check or keep up — see cron.js.
+  cron: {
+    serve: 'cron',
+  },
   postgres: {
     serve: 'resource',
   },
@@ -101,6 +106,7 @@ export function autoEnv(type, port) {
       // Generic container app — the near-universal convention is to listen on $PORT.
       return { PORT: String(port), NODE_ENV: 'production' };
     case 'worker':
+    case 'cron':
       // Deliberately no PORT: nothing is published, so a port would only tempt the app to bind
       // one that no one can reach.
       return { NODE_ENV: 'production' };

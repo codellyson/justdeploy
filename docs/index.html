@@ -419,10 +419,14 @@
 <span class="cmd">justdeploy</span> gc               <span class="cmt"># reclaim disk: trim old container images</span></code></pre>
       </div>
       <p>Supported <code>--type</code> values: <code>vite</code>, <code>react</code>, <code>static</code>,
-      <code>adonis</code>, <code>nextjs</code>, <code>app</code>, <code>worker</code>, <code>postgres</code>.</p>
+      <code>adonis</code>, <code>nextjs</code>, <code>app</code>, <code>worker</code>, <code>cron</code>, <code>postgres</code>.</p>
       <p><code>worker</code> is for anything that runs but never serves HTTP — a bot, a queue consumer,
       a scheduler. It takes no domain and no port, and is never health-checked over HTTP; its deploy
       succeeds when the process stays up.</p>
+      <p><code>cron</code> is for a batch job that runs and exits: same build, but run on a schedule
+      via a systemd timer instead of kept alive. Add it with
+      <code>--schedule daily --cmd "npm run ingest"</code>, then <code>justdeploy schedule</code> to
+      see when it fires and <code>justdeploy run &lt;name&gt;</code> to trigger one immediately.</p>
     </section>
 
     <!-- 5 dashboard -->

@@ -35,6 +35,10 @@ export function normSubdir(subdir) {
   return clean;
 }
 
+// A cron job's resolved env, written where only root can read it (it holds secrets) and referenced
+// by the systemd unit — units themselves are world-readable, so values must never go inline.
+export const cronEnvFile = (name) => join(HOME, 'cron', `${name}.env`);
+
 // Caddy admin API — driven live, no config file on disk, no SIGHUP.
 export const CADDY_ADMIN = process.env.CADDY_ADMIN || 'http://localhost:2019';
 

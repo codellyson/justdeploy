@@ -14,6 +14,7 @@ import * as db from './db.js';
 import * as caddy from './caddy.js';
 import * as proc from './proc.js';
 import * as container from './container.js';
+import * as cron from './cron.js';
 import * as github from './github.js';
 import { classify } from './diagnose.js';
 import { run, capture } from './sh.js';
@@ -25,8 +26,8 @@ const KEEP_RELEASES = 5; // besides the current one
 // this window is the only evidence we have that it booted rather than crash-looped.
 const WORKER_SETTLE = 10;
 // Serve models whose releases come from a Railpack-built image + Docker.
-const isContainerized = (serve) => serve === 'container' || serve === 'worker';
-const DEPLOYABLE = ['static', 'proxy', 'container', 'worker'];
+const isContainerized = (serve) => serve === 'container' || serve === 'worker' || serve === 'cron';
+const DEPLOYABLE = ['static', 'proxy', 'container', 'worker', 'cron'];
 export const isDeployable = (serve) => DEPLOYABLE.includes(serve);
 
 // The env injected into build/release/run: the app's stored vars + the type's auto vars (PORT,
@@ -237,7 +238,8 @@ async function deployContainer(database, name, app, sha) {
   const startCmd = app.release_cmd && appStart ? `${app.release_cmd} && ${appStart}` : appStart;
   await container.build(name, name, sha, buildSrc, startCmd);  // railpack build → image tag
   const worker = app.serve === 'worker';
-  const port = worker ? null : db.allocatePort(database);
+  const scheduled = app.serve === 'cron';
+  const port = worker || scheduled ? null : db.allocatePort(database);
   const env = appEnv(database, name, app.type, port);    // includes PORT=<port>, ${{ }} resolved (container-aware)
   const volumes = containerVolumes(name, app.persist);
   // Attach provisioned Postgres to the shared network so this container can reach it by name.
@@ -246,6 +248,19 @@ async function deployContainer(database, name, app, sha) {
   // Otherwise (Railpack detects the start itself — nextjs, app, worker) run it as its own phase
   // against the same image, or it would be silently dropped.
   if (app.release_cmd && !appStart) await releasePhase(name, sha, app.release_cmd, env, volumes);
+
+  // A scheduled job runs nothing now — it hands the image to systemd and stops. Success means the
+  // image built and the timer is armed; whether a *run* works is the run's business, not the deploy's.
+  if (scheduled) {
+    const { schedule, next } = cron.install(name, {
+      image: container.imageTag(name, sha), schedule: app.schedule, cmd: app.cmd, env, volumes,
+    });
+    appendFileSync(buildLog(name), `\n[justdeploy] scheduled: ${schedule}${next ? ` — next run ${next}` : ''}\n`);
+    db.setPorts(database, name, { live: null, pending: null, pid: null });
+    setCurrent(name, sha);
+    container.gcAfterDeploy(name, sha);
+    return;
+  }
 
   let newC;
   if (worker) {
@@ -324,11 +339,19 @@ export async function rollback(database, name, sha) {
   if (isContainerized(app.serve)) {
     if (!container.imageExists(name, sha)) return deploy(database, name, { sha });
     const worker = app.serve === 'worker';
+    const scheduled = app.serve === 'cron';
     const deployId = db.startDeploy(database, name, now());
     try {
-      const port = worker ? null : db.allocatePort(database);
+      const port = worker || scheduled ? null : db.allocatePort(database);
       const env = appEnv(database, name, app.type, port);
       const volumes = containerVolumes(name, app.persist);
+      // Rolling back a scheduled job just re-points its timer at the older image.
+      if (scheduled) {
+        cron.install(name, { image: container.imageTag(name, sha), schedule: app.schedule, cmd: app.cmd, env, volumes });
+        setCurrent(name, sha);
+        db.finishDeploy(database, deployId, 'success', sha, 'instant rollback', now());
+        return { sha, instant: true };
+      }
       let newC;
       if (worker) {
         newC = await startWorker(name, sha, env, volumes);
@@ -428,6 +451,8 @@ export async function destroy(database, name, { keepData = false } = {}) {
 
   if (app.serve === 'proxy' && app.live_pid) {
     await proc.drainAndKill(app.live_pid, 0);
+  } else if (app.serve === 'cron') {
+    cron.remove(name); // disarm the timer and drop its units + env file
   } else if (isContainerized(app.serve)) {
     container.stop(app.container);
     container.pruneExcept(name, null); // remove any lingering jd-<app>-* containers

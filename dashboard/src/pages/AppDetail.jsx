@@ -58,6 +58,7 @@ export function AppDetail({ name: nameProp, project: projProp, onClose } = {}) {
   const deploy = () => act('deploy', () => api.deploy(name), 'Logs').then(() => toast(`deploying ${name}`));
   const rollback = () => { if (confirm(`Roll back to ${shortSha(app.rollbackTo)}?`)) act('rollback', () => api.rollback(name), 'Logs'); };
   const rollbackSha = (sha) => { if (confirm(`Roll back to ${shortSha(sha)}?`)) act('rollback', () => api.rollback(name, sha), 'Logs'); };
+  const runNow = () => act('run', () => api.runNow(name), 'Logs').then(() => toast(`running ${name}…`));
   const remove = () => { if (confirm(`Delete ${name}? Removes files and stops it.`)) act('delete', async () => { await api.remove(name); onClose ? onClose() : navigate(back); toast(`${name} removed`); }); };
   const saveGroup = (v) => {
     if ((v || '').trim() === (app.group || '')) return; // unchanged
@@ -92,6 +93,7 @@ export function AppDetail({ name: nameProp, project: projProp, onClose } = {}) {
         </div>
         <div className="flex flex-wrap gap-2">
           {app.rollbackTo && <button disabled={!!busy} onClick={rollback} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-sm font-medium transition hover:border-muted/50 disabled:opacity-60"><Icon.Rollback className="h-4 w-4" /> Rollback</button>}
+          {app.serve === 'cron' && <button disabled={!!busy} onClick={runNow} className="flex items-center gap-1.5 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-sm font-medium transition hover:border-muted/50 disabled:opacity-60"><Icon.Terminal className="h-4 w-4" /> {busy === 'run' ? 'Starting…' : 'Run now'}</button>}
           {app.serve !== 'file' && <button disabled={!!busy} onClick={deploy} className="flex items-center gap-1.5 rounded-xl bg-accent px-3.5 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06] disabled:opacity-60"><Icon.Zap className="h-4 w-4" /> {busy === 'deploy' ? 'Deploying…' : 'Deploy'}</button>}
         </div>
       </div>
@@ -194,7 +196,17 @@ function OverviewTab({ app, onLogs, onDeploys }) {
             {app.serve === 'proxy' && <div className="flex flex-col gap-1.5"><span className="label-tiny">Port</span><Mono className="text-sm">:{app.live_port ?? '—'}</Mono></div>}
             {app.serve === 'proxy' && <div className="flex flex-col gap-1.5"><span className="label-tiny">PID</span><Mono className="text-sm">{app.live_pid ?? '—'}</Mono></div>}
             {app.serve === 'worker' && <div className="flex flex-col gap-1.5"><span className="label-tiny">Process</span><span className="text-sm font-medium">{app.running ? 'Running' : 'Stopped'}</span></div>}
+            {app.serve === 'cron' && <div className="flex flex-col gap-1.5"><span className="label-tiny">Schedule</span><Mono className="text-sm">{app.schedule || '—'}</Mono></div>}
+            {app.serve === 'cron' && <div className="flex flex-col gap-1.5"><span className="label-tiny">Last run</span><span className="text-sm font-medium">{app.cron?.lastExit === null ? 'Never run' : app.cron?.lastExit === 0 ? 'Succeeded' : `Failed (exit ${app.cron?.lastExit})`}</span></div>}
           </div>
+          {app.serve === 'cron' && (
+            <div className="flex flex-col gap-1.5">
+              <span className="label-tiny">Command</span>
+              <Mono className="break-all text-sm text-secondary">{app.cmd || '—'}</Mono>
+              {app.cron?.next && <span className="text-xs text-muted">Next run {app.cron.next}</span>}
+              {app.cron && !app.cron.scheduled && <span className="text-xs text-danger">Timer is not armed — redeploy to arm it.</span>}
+            </div>
+          )}
           {(d?.sha || app.repo) && (
             <div className="flex flex-col gap-1.5">
               <span className="label-tiny">Source</span>
@@ -761,11 +773,19 @@ function DeploysTab({ name, app, onRollback }) {
 function ConfigTab({ app, onDelete }) {
   const [release, setRelease] = useState(app.release_cmd || '');
   const [persist, setPersist] = useState(app.persist || '');
+  const [schedule, setSchedule] = useState(app.schedule || '');
+  const [cmd, setCmd] = useState(app.cmd || '');
   const [busy, setBusy] = useState(false);
+  const isCron = app.serve === 'cron';
   const save = async () => {
     setBusy(true);
-    try { await api.setConfig(app.name, { release: release.trim(), persist: persist.trim() }); invalidate(); toast('config saved — redeploy to apply', 'success'); }
-    catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
+    try {
+      await api.setConfig(app.name, {
+        release: release.trim(), persist: persist.trim(),
+        ...(isCron ? { schedule: schedule.trim(), cmd: cmd.trim() } : {}),
+      });
+      invalidate(); toast('config saved — redeploy to apply', 'success');
+    } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
   };
   return (
     <div className="flex flex-col gap-4">
@@ -784,6 +804,20 @@ function ConfigTab({ app, onDelete }) {
           <input value={persist} onChange={(e) => setPersist(e.target.value)} placeholder={persistHint(app.type)} className="field font-mono" />
           <span className="text-xs text-muted">Comma-separated; symlinked to data/ so they survive deploys.</span>
         </div>
+        {isCron && (
+          <>
+            <div className="flex flex-col gap-1.5">
+              <label className="label-tiny">Schedule</label>
+              <input value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="daily" className="field font-mono" />
+              <span className="text-xs text-muted">hourly · daily · weekly, or an OnCalendar expression like <code>*-*-* 03:00:00</code>.</span>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="label-tiny">Command</label>
+              <input value={cmd} onChange={(e) => setCmd(e.target.value)} placeholder="npm run ingest" className="field font-mono" />
+              <span className="text-xs text-muted">What each run executes inside the built image.</span>
+            </div>
+          </>
+        )}
         <div className="flex justify-end"><button onClick={save} disabled={busy} className="rounded-xl bg-accent px-3.5 py-2 text-sm font-semibold text-[rgb(var(--accent-text))] transition hover:brightness-[1.06] disabled:opacity-60">{busy ? 'Saving…' : 'Save'}</button></div>
       </div>
 

@@ -3,8 +3,10 @@
 // deploy. This module just parses/validates the small yaml subset when one is provided.
 //
 //   name: gobi-design
-//   type: vite            # react | vite | static | adonis | nextjs | app | worker
-//   domain: gobi.design   # not needed for `worker` (or postgres) — they serve no traffic
+//   type: vite            # react | vite | static | adonis | nextjs | app | worker | cron
+//   domain: gobi.design   # not needed for worker/cron (or postgres) — they serve no traffic
+//   schedule: daily       # cron only: OnCalendar expression
+//   cmd: npm run ingest   # cron only: what to run each fire
 //   postgres: gobi-db     # optional: names a provisioned db resource to wire in
 //   health:               # optional, proxy types only
 //     path: /health
@@ -64,10 +66,14 @@ export function validate(cfg) {
   if (!TYPES.includes(cfg.type)) {
     errs.push(`type must be one of: ${TYPES.join(', ')}`);
   }
-  // Only types that answer HTTP need a domain — a resource (postgres) and a worker serve no traffic.
+  // Only types that answer HTTP need a domain — a resource, a worker and a cron job serve no traffic.
   const serve = TABLE[cfg.type]?.serve;
-  if (serve && serve !== 'resource' && serve !== 'worker' && !cfg.domain) {
+  if (serve && !['resource', 'worker', 'cron'].includes(serve) && !cfg.domain) {
     errs.push('domain is required for deployable types');
+  }
+  if (serve === 'cron') {
+    if (!cfg.schedule) errs.push('schedule is required for a cron job (e.g. "daily", "hourly", or "*-*-* 03:00:00")');
+    if (!cfg.cmd) errs.push('command is required for a cron job (e.g. "npm run ingest")');
   }
   if (errs.length) throw new Error(`invalid config:\n  - ${errs.join('\n  - ')}`);
   return cfg;
@@ -85,6 +91,8 @@ export function stringify(cfg) {
   if (cfg.postgres) lines.push(`postgres: ${cfg.postgres}`);
   if (cfg.release) lines.push(`release: ${cfg.release}`);
   if (cfg.persist) lines.push(`persist: ${cfg.persist}`);
+  if (cfg.schedule) lines.push(`schedule: ${cfg.schedule}`);
+  if (cfg.cmd) lines.push(`cmd: ${cfg.cmd}`);
   if (cfg.health) {
     lines.push('health:');
     if (cfg.health.path) lines.push(`  path: ${cfg.health.path}`);

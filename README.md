@@ -190,6 +190,7 @@ Two optional per-app knobs, set at `add`, via `justdeploy set`, or in the dashbo
 | `nextjs` | container   | `HOSTNAME=0.0.0.0`, `PORT`; runs `next start` as-is (no next.config change), or standalone if set |
 | `app`    | container   | `PORT`, `NODE_ENV`; catch-all for anything Railpack can build (Node, Python, Go, …) |
 | `worker` | worker      | `NODE_ENV`; **no port, no domain, no HTTP health check** — for processes that never serve traffic |
+| `cron`   | cron        | `NODE_ENV`; a batch job run on a schedule instead of kept alive |
 | `postgres` | resource  | `docker run` + scoped non-superuser role, TLS, localhost port |
 
 ### Workers (bots, queue consumers, schedulers)
@@ -217,6 +218,38 @@ keeping its env, project, and history:
 ```bash
 justdeploy set <name> --type worker && justdeploy deploy <name>
 ```
+
+### Scheduled jobs (`cron`)
+
+A `cron` service is a batch job: it runs on a schedule, does its work, and exits. Same Railpack
+build as a worker — but instead of being kept alive, the image is handed to a systemd timer.
+
+```bash
+justdeploy add https://github.com/you/repo.git --type cron \
+  --subdir ingest --schedule daily --cmd "npm run ingest"
+```
+
+- `--schedule` takes `hourly` / `daily` / `weekly` / `monthly`, or any systemd
+  [OnCalendar](https://www.freedesktop.org/software/systemd/man/systemd.time.html) expression
+  (`*-*-* 03:00:00`, `Mon *-*-* 06:00`). It's validated at `add` time, not at 3am.
+- `--cmd` is what each run executes inside the built image.
+- The deploy succeeds when the image builds and the timer is armed. Whether a *run* works is the
+  run's business — check it with `justdeploy schedule`.
+
+```bash
+justdeploy schedule          # when each job fires, and how its last run went
+justdeploy run <name>        # fire one now, without waiting for the timer
+justdeploy logs <name> -f    # every run's output (journald)
+```
+
+Runs never overlap (systemd won't start a job whose previous run is still going), missed runs are
+caught up after downtime (`Persistent=true`), and env vars, `--persist`, and `${{Postgres.URL}}`
+references work as they do everywhere else. Secrets go in a root-only env file, never inline in
+the unit — units are world-readable.
+
+**Batch job or worker?** If the process is *supposed* to exit when it's done, it's a `cron`. If
+it's supposed to run forever, it's a `worker`. Deploying a batch job as a worker fails with
+*"this looks like a batch job, not a service"*, which is the platform telling you to use `cron`.
 
 ## Users (friends & family)
 

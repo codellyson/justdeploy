@@ -13,7 +13,7 @@ const BUILDKIT_HOST = `docker-container://${BUILDKIT}`;
 // Shared bridge network so app containers reach provisioned Postgres by container name (a
 // container's own 127.0.0.1 is NOT the host's — the localhost-published DB port is unreachable
 // from inside a container).
-const NET = 'jd-net';
+export const NET = 'jd-net';
 
 export const imageTag = (app, sha) => `justdeploy/${app}:${sha.slice(0, 12)}`;
 export const containerName = (app, sha) => `jd-${app}-${sha.slice(0, 12)}`;

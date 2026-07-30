@@ -35,6 +35,7 @@ export const TYPE_LABEL = {
   nextjs: 'Next.js',
   app: 'Container',
   worker: 'Worker',
+  cron: 'Cron Job',
   postgres: 'Postgres',
 };
 export const typeLabel = (t) => TYPE_LABEL[t] || t;
@@ -57,5 +58,7 @@ export function appHealth(app) {
   // A worker deploying successfully doesn't mean it's still alive — nothing probes it afterwards,
   // so its container being down is the only way we learn it died. Absent for other serve models.
   if (app.running === false) return 'failed';
+  // A cron job's health is its last *run*, not its deploy: the deploy only armed the timer.
+  if (app.cron) return !app.cron.scheduled || app.cron.lastExit ? 'failed' : 'ok';
   return 'ok';
 }
