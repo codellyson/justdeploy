@@ -54,11 +54,11 @@ export const imageExists = (app, sha) => docker(['image', 'inspect', imageTag(ap
 // Run the app's image detached on a localhost port. The app must listen on $PORT (passed in env);
 // we publish 127.0.0.1:port:port so Caddy can reverse-proxy to it. `volumes` are `host:container`.
 // A null `port` publishes nothing — that's a worker, which serves no traffic.
-export function runContainer(app, sha, port, env, volumes = []) {
+export function runContainer(app, sha, port, env, volumes = [], restart = 'unless-stopped') {
   ensureNetwork();
   const name = containerName(app, sha);
   docker(['rm', '-f', name]); // idempotent
-  const args = ['run', '-d', '--name', name, '--restart', 'unless-stopped', '--network', NET];
+  const args = ['run', '-d', '--name', name, '--restart', restart, '--network', NET];
   for (const [k, v] of Object.entries(env)) args.push('-e', `${k}=${v}`);
   if (port) args.push('-p', `127.0.0.1:${port}:${port}`);
   for (const v of volumes) args.push('-v', v);
@@ -80,6 +80,8 @@ export function runOnce(app, sha, env, volumes, cmd) {
   const r = docker(args);
   return { status: r.status, output: `${r.stdout || ''}${r.stderr || ''}` };
 }
+
+export const setRestart = (name, policy) => docker(['update', '--restart', policy, name]);
 
 export function stop(name) {
   if (name) docker(['rm', '-f', name]);

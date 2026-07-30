@@ -188,24 +188,35 @@ async function releasePhase(name, sha, cmd, env, volumes) {
   if (status !== 0) throw new Error(`release command failed (exit ${status}): ${cmd}`);
 }
 
-// A worker publishes no port, so there is nothing to probe: it is healthy when it is still up,
-// and has not been restarted, after a short settle window. The restart count is what matters —
-// `--restart unless-stopped` would otherwise keep a boot-crashing worker permanently "running".
-async function waitForWorker(c) {
+// Start a worker and prove it stays up. A worker publishes no port, so there is nothing to probe:
+// it is healthy when it is still running after a short settle window.
+//
+// It starts with `--restart no` on purpose. Under `unless-stopped` Docker restarts a dying worker
+// within ~100ms, so all we could ever observe is a restart count — the real exit code, which is the
+// difference between "crashed" and "this is a one-shot job that ran and finished", would be lost.
+// The restart policy goes on only once it has earned it.
+async function startWorker(name, sha, env, volumes) {
+  const c = container.runContainer(name, sha, null, env, volumes, 'no');
   const deadline = Date.now() + WORKER_SETTLE * 1000;
-  while (Date.now() < deadline) {
-    const s = container.state(c);
-    if (s.restarts > 0) {
-      throw new Error(`worker crashed and restarted ${s.restarts}x within ${WORKER_SETTLE}s — it is not staying up`);
+  try {
+    while (Date.now() < deadline) {
+      const s = container.state(c);
+      if (s.status === 'exited') {
+        throw new Error(s.exitCode === 0
+          ? 'worker ran and exited cleanly (code 0) — a worker has to keep running; this looks like a batch job, not a service'
+          : `worker exited with code ${s.exitCode} — it never stayed running`);
+      }
+      if (s.status === 'missing') throw new Error('worker container disappeared right after starting');
+      if (s.restarts > 0) throw new Error(`worker restarted ${s.restarts}x within ${WORKER_SETTLE}s — it is not staying up`);
+      await sleep(1000);
     }
-    if (s.status === 'exited') {
-      throw new Error(s.exitCode === 0
-        ? 'worker exited immediately (code 0) — a worker has to keep running; this looks like a one-shot command'
-        : `worker exited with code ${s.exitCode} — it never stayed running`);
-    }
-    if (s.status === 'missing') throw new Error('worker container disappeared right after starting');
-    await sleep(1000);
+  } catch (e) {
+    salvageLogs(name, c, e.message);
+    container.stop(c);
+    throw e;
   }
+  container.setRestart(c, 'unless-stopped'); // survived — let Docker keep it alive from here
+  return c;
 }
 
 // Zero-downtime container swap: build the image, start the new container on a fresh port,
@@ -235,17 +246,12 @@ async function deployContainer(database, name, app, sha) {
   // Otherwise (Railpack detects the start itself — nextjs, app, worker) run it as its own phase
   // against the same image, or it would be silently dropped.
   if (app.release_cmd && !appStart) await releasePhase(name, sha, app.release_cmd, env, volumes);
-  const newC = container.runContainer(name, sha, port, env, volumes);
 
+  let newC;
   if (worker) {
-    try {
-      await waitForWorker(newC);
-    } catch (e) {
-      salvageLogs(name, newC, e.message);
-      container.stop(newC);
-      throw e;
-    }
+    newC = await startWorker(name, sha, env, volumes);
   } else {
+    newC = container.runContainer(name, sha, port, env, volumes);
     const healthy = await proc.healthCheck(port, { path: app.health_path, timeout: app.health_timeout });
     if (!healthy) {
       salvageLogs(name, newC, `health check failed on port ${port} — container output follows`);
@@ -322,11 +328,12 @@ export async function rollback(database, name, sha) {
     try {
       const port = worker ? null : db.allocatePort(database);
       const env = appEnv(database, name, app.type, port);
-      const newC = container.runContainer(name, sha, port, env, containerVolumes(name, app.persist));
+      const volumes = containerVolumes(name, app.persist);
+      let newC;
       if (worker) {
-        try { await waitForWorker(newC); }
-        catch (e) { salvageLogs(name, newC, e.message); container.stop(newC); throw e; }
+        newC = await startWorker(name, sha, env, volumes);
       } else {
+        newC = container.runContainer(name, sha, port, env, volumes);
         const healthy = await proc.healthCheck(port, { path: app.health_path, timeout: app.health_timeout });
         if (!healthy) {
           salvageLogs(name, newC, `health check failed on port ${port} — container output follows`);
