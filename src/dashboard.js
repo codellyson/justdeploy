@@ -334,7 +334,9 @@ function runtimeTail(app, lines) {
 // client can filter and colour. Answers "which app just broke?" without knowing where to look.
 function streamAllLogs(req, res, database, owner) {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-  const apps = db.listApps(database, owner).filter((a) => a.serve !== 'resource');
+  // Static sites are served straight off disk by the host's Caddy — they have no process and so no
+  // runtime output. Listing them would only add filters that never emit anything.
+  const apps = db.listApps(database, owner).filter((a) => a.serve !== 'resource' && a.serve !== 'static');
   res.write(`event: apps\ndata: ${JSON.stringify(apps.map((a) => ({ name: a.name, type: a.type, serve: a.serve })))}\n\n`);
 
   const lines = Math.max(1, Math.floor(200 / Math.max(apps.length, 1))); // keep the initial backlog bounded

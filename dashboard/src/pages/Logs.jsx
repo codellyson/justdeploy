@@ -134,7 +134,8 @@ export function Logs() {
         ))}
       </div>
       <p className="text-xs text-muted">
-        Showing {shown.length} of {lines.length} buffered lines (newest {MAX_LINES} kept). Build output stays on each service's own Logs tab.
+        Showing {shown.length} of {lines.length} buffered lines (newest {MAX_LINES} kept). Static sites aren't listed — they have no
+        process behind them. Build output stays on each service's own Logs tab.
       </p>
     </div>
   );

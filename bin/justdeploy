@@ -222,8 +222,9 @@ function cmdLs() {
 // an app happens to use.
 function cmdLogsAll(a) {
   const database = db.open();
-  const apps = db.listApps(database).filter((x) => x.serve !== 'resource');
-  if (!apps.length) return console.log('no apps yet');
+  // Static sites have no process behind them (host Caddy serves the files), so no runtime output.
+  const apps = db.listApps(database).filter((x) => x.serve !== 'resource' && x.serve !== 'static');
+  if (!apps.length) return console.log('no running services — static sites have no runtime output; see `justdeploy logs <name> --build`');
   const width = Math.max(...apps.map((x) => x.name.length));
   const lines = a.lines ? Number(a.lines) : 20;
   const children = [];
