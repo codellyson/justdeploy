@@ -179,6 +179,23 @@ Two optional per-app knobs, set at `add`, via `justdeploy set`, or in the dashbo
 - `--persist "tmp,storage"` — runtime dirs symlinked to the persistent `/srv/<name>/data/`
   area so their contents (like a SQLite file) survive the build dir being replaced each deploy.
 
+### Logs
+
+Per service — `justdeploy logs <name>` (add `--build` for the build/release output, `-f` to follow),
+or the Logs tab in the dashboard.
+
+Across the whole box — every running service in one stream, each line tagged with its app:
+
+```bash
+justdeploy logs --all -f
+```
+
+The dashboard has the same thing under **Logs**, with per-app filters, search and pause. Both
+normalise the three places output actually lives (`docker logs` for containers and workers,
+journald for cron jobs, `runtime.log` for host processes), so you don't need to know which a
+service uses. Static sites aren't included — the host's Caddy serves them off disk, so there's no
+process and no runtime output; their build output is still on the service's own Logs tab.
+
 ### Supported types
 
 | type     | serve model | what `add` auto-fills                                    |
