@@ -6,7 +6,14 @@ const MAX_LINES = 3000; // ring buffer — a chatty app must not grow the tab wi
 // Structured access logs run to a couple of KB on a single line. Unwrapped, a few hundred of those
 // lay out ~12,000px wide and lock up the renderer, so lines are clipped before they reach the DOM.
 const MAX_LINE_CHARS = 800;
-const clip = (s) => (s.length > MAX_LINE_CHARS ? `${s.slice(0, MAX_LINE_CHARS)} …+${s.length - MAX_LINE_CHARS} chars` : s);
+// Nest (and plenty of others) colour their output. The per-service Logs tab renders those escapes;
+// here every line is already colour-coded by app, so they'd only show up as `[32m` litter.
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
+const clip = (raw) => {
+  const s = raw.replace(ANSI, '');
+  return s.length > MAX_LINE_CHARS ? `${s.slice(0, MAX_LINE_CHARS)} …+${s.length - MAX_LINE_CHARS} chars` : s;
+};
 
 // A stable colour per app so you can tell streams apart at a glance without reading the tag.
 const HUES = [200, 150, 40, 330, 265, 15, 95, 305];
