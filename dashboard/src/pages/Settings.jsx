@@ -4,6 +4,7 @@ import { api, connectGithubApp } from '../api';
 import { toast } from '../components/toast';
 import { Icon } from '../components/icons';
 import { Spinner } from '../components/ui';
+import { ThemePicker } from '../components/ThemePicker';
 import { cx, timeAgo } from '../lib/format';
 
 function CopyField({ value, secret }) {
@@ -134,6 +135,11 @@ function SettingsBody({ me, st, bk, wh, backups, host, gh, reload }) {
           </div>
         </div>
       </Card>}
+
+      {/* Appearance */}
+      <Card icon={Icon.Sun} title="Appearance" subtitle="Light or dark, and the colour theme. Saved in this browser.">
+        <ThemePicker />
+      </Card>
 
       {/* Security */}
       <Card icon={Icon.Lock} title="Password" subtitle={`Your password${me?.username ? ` — signed in as ${me.username}${isAdmin ? ' (admin)' : ''}` : ''}.`}>
