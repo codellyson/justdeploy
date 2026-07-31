@@ -7,6 +7,7 @@ import { Overview } from './pages/Overview';
 import { NewProject } from './pages/NewProject';
 import { Settings } from './pages/Settings';
 import { Canvas } from './pages/Canvas';
+import { Logs } from './pages/Logs';
 import { ServiceDetail, LegacyServiceRedirect } from './pages/ServiceDetail';
 import { ToastHost } from './components/toast';
 import { Spinner } from './components/ui';
@@ -40,6 +41,7 @@ export default function App() {
               <Route path="/new" element={<NewProject />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/canvas" element={<Canvas />} />
+              <Route path="/logs" element={<Logs />} />
               <Route path="/projects/:name" element={<Canvas />} />
               <Route path="/projects/:project/:name" element={<ServiceDetail />} />
               {/* legacy flat routes → redirect to the project-scoped URL */}

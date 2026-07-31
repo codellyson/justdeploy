@@ -101,6 +101,7 @@ export function Shell({ user, onSignedOut }) {
         <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-2">
           <NavItem to="/" end icon={Icon.Layers}>Projects</NavItem>
           <NavItem to="/canvas" icon={Icon.Canvas}>Canvas</NavItem>
+          <NavItem to="/logs" icon={Icon.Terminal}>Logs</NavItem>
           <NavItem to="/settings" icon={Icon.Settings}>Settings</NavItem>
           <div className="my-2 border-t border-border" />
           <a

@@ -15,6 +15,7 @@
 //   justdeploy deploy [name]                                run the deploy loop
 //   justdeploy ls                                           list apps and their state
 //   justdeploy logs <name> [-f]                             tail an app's log
+//   justdeploy logs --all [-f] [--lines N]                  every app's output at once, tagged by app
 //   justdeploy env <name> [KEY=VAL ...]                     list or set env vars
 //   justdeploy pg <name>                                    provision a Postgres resource
 //   justdeploy rm <name> [--keep-data]                      tear down an app or resource
@@ -216,9 +217,59 @@ function cmdLs() {
   }
 }
 
+// Every app's live output in one terminal, each line tagged with the app it came from. The three
+// backends (docker, journald, plain files) are normalised here so you don't have to know which
+// an app happens to use.
+function cmdLogsAll(a) {
+  const database = db.open();
+  const apps = db.listApps(database).filter((x) => x.serve !== 'resource');
+  if (!apps.length) return console.log('no apps yet');
+  const width = Math.max(...apps.map((x) => x.name.length));
+  const lines = a.lines ? Number(a.lines) : 20;
+  const children = [];
+
+  for (const app of apps) {
+    const follow = 'follow' in a;
+    let cmd, args;
+    if (app.serve === 'cron') {
+      cmd = 'journalctl';
+      args = ['-u', `${cron.unitName(app.name)}.service`, '-n', String(lines), '--no-pager', ...(follow ? ['-f'] : [])];
+    } else if (app.container) {
+      cmd = 'docker';
+      args = ['logs', '--tail', String(lines), ...(follow ? ['-f'] : []), app.container];
+    } else {
+      cmd = 'tail';
+      args = ['-n', String(lines), ...(follow ? ['-F'] : []), runtimeLog(app.name)];
+    }
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const tag = `[${app.name.padEnd(width)}] `;
+    const pipe = (stream, isErr) => {
+      let buf = '';
+      stream.on('data', (d) => {
+        buf += d.toString();
+        const parts = buf.split('\n');
+        buf = parts.pop();
+        for (const line of parts) {
+          // tail/journalctl complaining about a missing file is not the app's output.
+          if (isErr && /No such file or directory|cannot open|has appeared|has become inaccessible/i.test(line)) continue;
+          process.stdout.write(tag + line + '\n');
+        }
+      });
+    };
+    pipe(child.stdout, false);
+    pipe(child.stderr, true);
+    child.on('error', () => {});
+    children.push(child);
+  }
+  const stop = () => { for (const c of children) c.kill('SIGKILL'); process.exit(0); };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+}
+
 function cmdLogs(a) {
+  if ('all' in a) return cmdLogsAll(a);
   const name = a._[0];
-  if (!name) die('usage: justdeploy logs <name> [--build] [-f]');
+  if (!name) die('usage: justdeploy logs <name> [--build] [-f]   |   justdeploy logs --all [-f]');
   const tail = (lf) => spawn('tail', a.follow ? ['-n', '200', '-f', lf] : ['-n', '200', lf], { stdio: 'inherit' });
   // --build → this deploy's build output (clone/build/migrations). Default → the running app's output.
   if ('build' in a) {

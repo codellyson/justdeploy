@@ -322,6 +322,45 @@ function streamJournal(req, res, unit) {
   req.on('close', () => { clearInterval(hb); child.kill('SIGKILL'); });
 }
 
+// One app's live output as a spawnable tail, whichever backend it happens to use. `tail -F`
+// (not -f) so an app that hasn't written its log yet still streams once it does.
+function runtimeTail(app, lines) {
+  if (app.serve === 'cron') return ['journalctl', ['-u', `${cron.unitName(app.name)}.service`, '-n', String(lines), '-f', '--no-pager']];
+  if (app.container) return ['docker', ['logs', '-f', '--tail', String(lines), app.container]];
+  return ['tail', ['-n', String(lines), '-F', runtimeLog(app.name)]];
+}
+
+// Every app's runtime output merged into one SSE stream, each line tagged with its app so the
+// client can filter and colour. Answers "which app just broke?" without knowing where to look.
+function streamAllLogs(req, res, database, owner) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+  const apps = db.listApps(database, owner).filter((a) => a.serve !== 'resource');
+  res.write(`event: apps\ndata: ${JSON.stringify(apps.map((a) => ({ name: a.name, type: a.type, serve: a.serve })))}\n\n`);
+
+  const lines = Math.max(1, Math.floor(200 / Math.max(apps.length, 1))); // keep the initial backlog bounded
+  const children = [];
+  for (const app of apps) {
+    const [cmd, args] = runtimeTail(app, lines);
+    let child;
+    try { child = spawn(cmd, args); } catch { continue; }
+    // tail/journalctl chatter about a missing file isn't the app's output — drop it rather than
+    // pass noise off as a log line.
+    const emit = (buf, isErr) => {
+      for (const line of buf.toString().split('\n')) {
+        if (!line) continue;
+        if (isErr && /No such file or directory|cannot open|has appeared|has become inaccessible/i.test(line)) continue;
+        res.write(`data: ${JSON.stringify({ app: app.name, line })}\n\n`);
+      }
+    };
+    child.stdout.on('data', (d) => emit(d, false));
+    child.stderr.on('data', (d) => emit(d, true));
+    child.on('error', () => {});
+    children.push(child);
+  }
+  const hb = setInterval(() => res.write(': hb\n\n'), 15000);
+  req.on('close', () => { clearInterval(hb); for (const c of children) c.kill('SIGKILL'); });
+}
+
 // Where to read an app's logs for a kind: build → build.log; runtime → the app's live output
 // (runtime.log for host processes, `docker logs` for containers, journald for cron jobs).
 // Falls back to the legacy combined app.log for apps not yet redeployed after the split.
@@ -526,6 +565,11 @@ export async function api(database, req, res, path) {
 
   // Members see only what they own; admins see everything. `scope` is the owner filter (null = all).
   const scope = isAdmin ? null : user.username;
+
+  // Every app's logs in one stream — scoped, so a member never sees another user's output.
+  if (path === '/api/logs/stream' && req.method === 'GET') {
+    return streamAllLogs(req, res, database, scope);
+  }
 
   if (path === '/api/state' && req.method === 'GET') {
     return send(res, 200, {
