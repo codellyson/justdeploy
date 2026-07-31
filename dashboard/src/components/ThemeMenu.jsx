@@ -24,7 +24,9 @@ export function ThemeMenu() {
         {mode === 'dark' ? <Icon.Moon className="h-4 w-4" /> : <Icon.Sun className="h-4 w-4" />}
       </button>
       {open && (
-        <div className="animate-rise surface-solid absolute right-0 top-11 z-50 w-56 p-1.5 shadow-2xl">
+        {/* Opens up and to the right: the button lives at the bottom-left of the sidebar, so
+            anchoring right/downward put the menu 27px off the left edge and 216px below the fold. */}
+        <div className="animate-rise surface-solid absolute bottom-11 left-0 z-50 max-h-[70vh] w-56 overflow-y-auto p-1.5 shadow-2xl">
           <button
             onClick={() => { toggleMode(); }}
             className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-sm text-secondary transition hover:bg-bg hover:text-primary"

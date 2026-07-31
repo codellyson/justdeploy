@@ -112,8 +112,10 @@ export function Shell({ user, onSignedOut }) {
           >
             <Icon.FileCode className="h-[1.05rem] w-[1.05rem]" /> Docs <Icon.ExternalLink className="ml-auto h-3 w-3 opacity-60" />
           </a>
-          <div className="mt-auto px-1 pt-2"><ThemeMenu /></div>
         </nav>
+        {/* Theme sits outside the scrolling nav: as part of it, `mt-auto` made it the bottom of the
+            scroll area, so on a short window reaching it scrolled every nav link out of view. */}
+        <div className="shrink-0 px-4 pb-1"><ThemeMenu /></div>
         {/* User footer */}
         <div className="flex items-center gap-2.5 border-t border-border p-3">
           <span

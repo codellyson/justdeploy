@@ -3,6 +3,10 @@ import { Icon } from '../components/icons';
 import { cx } from '../lib/format';
 
 const MAX_LINES = 3000; // ring buffer — a chatty app must not grow the tab without bound
+// Structured access logs run to a couple of KB on a single line. Unwrapped, a few hundred of those
+// lay out ~12,000px wide and lock up the renderer, so lines are clipped before they reach the DOM.
+const MAX_LINE_CHARS = 800;
+const clip = (s) => (s.length > MAX_LINE_CHARS ? `${s.slice(0, MAX_LINE_CHARS)} …+${s.length - MAX_LINE_CHARS} chars` : s);
 
 // A stable colour per app so you can tell streams apart at a glance without reading the tag.
 const HUES = [200, 150, 40, 330, 265, 15, 95, 305];
@@ -18,7 +22,7 @@ export function Logs() {
   const [hidden, setHidden] = useState(() => new Set());
   const [q, setQ] = useState('');
   const [paused, setPaused] = useState(false);
-  const [wrap, setWrap] = useState(false);
+  const [wrap, setWrap] = useState(true); // off by default would reintroduce the runaway layout width
   const [connected, setConnected] = useState(false);
   const boxRef = useRef(null);
   const pausedRef = useRef(false);
@@ -40,7 +44,7 @@ export function Logs() {
       try { msg = JSON.parse(e.data); } catch { return; }
       setLines((prev) => {
         const next = prev.length >= MAX_LINES ? prev.slice(prev.length - MAX_LINES + 1) : prev.slice();
-        next.push({ id: seq.current++, app: msg.app, line: msg.line });
+        next.push({ id: seq.current++, app: msg.app, line: clip(String(msg.line)) });
         return next;
       });
     };
