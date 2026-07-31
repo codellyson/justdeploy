@@ -134,4 +134,7 @@ export function remove(app) {
     try { if (existsSync(f)) unlinkSync(f); } catch { /* ignore */ }
   }
   try { execSync('systemctl daemon-reload', { stdio: 'ignore' }); } catch { /* ignore */ }
+  // Removing the unit files doesn't clear a recorded failure: systemd keeps the failed state of a
+  // now-missing unit, so a deleted job haunts `systemctl --failed` indefinitely.
+  try { execSync(`systemctl reset-failed ${unitName(app)}.service ${unitName(app)}.timer`, { stdio: 'ignore' }); } catch { /* nothing to reset */ }
 }
